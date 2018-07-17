@@ -1,0 +1,9 @@
+<RCC>
+    <qresource prefix="/font"/>
+    <qresource prefix="/motor">
+        <file>images/motor/down.png</file>
+        <file>images/motor/left.png</file>
+        <file>images/motor/right.png</file>
+        <file>images/motor/up.png</file>
+    </qresource>
+</RCC>

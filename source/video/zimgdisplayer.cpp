@@ -70,7 +70,7 @@ void ZImgDisplayer::ZBindQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemap
     //start timer.
     this->m_timer=new QTimer;
     QObject::connect(this->m_timer,SIGNAL(timeout()),this,SLOT(ZSlotFetchImg()));
-    this->m_timer->start(10);//30ms.
+    this->m_timer->start(30);//30ms.
     return;
 }
 QSize ZImgDisplayer::sizeHint() const

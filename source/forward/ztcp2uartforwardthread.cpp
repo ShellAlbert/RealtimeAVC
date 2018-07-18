@@ -22,7 +22,7 @@ qint32 ZTcp2UartForwardThread::ZStopThread()
 void ZTcp2UartForwardThread::run()
 {
     QSerialPort *uart=new QSerialPort;
-    uart->setPortName("ttyUSB0");
+    uart->setPortName(gGblPara.m_uartName);
     uart->setBaudRate(QSerialPort::Baud115200);
     uart->setDataBits(QSerialPort::Data8);
     uart->setStopBits(QSerialPort::OneStop);
@@ -51,6 +51,7 @@ void ZTcp2UartForwardThread::run()
             delete tcpServer;
             continue;
         }
+        qDebug()<<"<Tcp2Uart>: listen on tcp "<<TCP_PORT_FORWARD;
         //wait until get a new connection.
         while(!gGblPara.m_bGblRst2Exit || !this->m_bExitFlag)
         {
@@ -83,6 +84,7 @@ void ZTcp2UartForwardThread::run()
                         break;
                     }
                     uart->waitForBytesWritten(1000);
+                    gGblPara.m_nTcp2UartBytes+=baFromTcp.size();
                 }
                 //read data from uart and write data to tcp.
                 if(uart->waitForReadyRead(100))//100ms.
@@ -94,6 +96,7 @@ void ZTcp2UartForwardThread::run()
                         break;
                     }
                     tcpSocket->waitForBytesWritten(1000);
+                    gGblPara.m_nUart2TcpBytes+=baFromUart.size();
                 }
 
                 //check tcp socket state.

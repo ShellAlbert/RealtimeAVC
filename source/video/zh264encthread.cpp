@@ -290,7 +290,7 @@ void ZH264EncThread::run()
                 this->m_semaH264Used->release();//已用信号量加1.
             }
 
-            this->usleep(1000);//1000us.
+            this->usleep(VIDEO_THREAD_SCHEDULE_US);
         }
     }
     x264_picture_clean(pPicIn);

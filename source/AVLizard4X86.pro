@@ -3,7 +3,7 @@ QT += gui
 
 #CONFIG -= app_bundle  gui
 
-QT += core serialport network
+QT += core serialport network charts
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -24,34 +24,108 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 SOURCES += \
     main.cpp \
-    zcamdevice.cpp \
-    zfiltecamdev.cpp \
-    zimgcapthread.cpp \
-    zimgprocessthread.cpp \
-    zalgorithmset.cpp \
-    zhistogram.cpp \
-    zimgfeaturedetectmatch.cpp \
     zgblpara.cpp \
-    zmaintask.cpp \
-    zimgdisplayer.cpp \
-    zh264encthread.cpp \
-    ztcp2uartforwardthread.cpp \
-    zvideotxthread.cpp
+    video/zcamdevice.cpp \
+    video/zfiltecamdev.cpp \
+    video/zimgcapthread.cpp \
+    video/zimgprocessthread.cpp \
+    video/zalgorithmset.cpp \
+    video/zhistogram.cpp \
+    video/zimgfeaturedetectmatch.cpp \
+    video/zimgdisplayer.cpp \
+    video/zh264encthread.cpp \
+    video/zvideotxthread.cpp \
+    video/zvideotask.cpp \
+    forward/ztcp2uartforwardthread.cpp \
+    audio/zaudiocapturethread.cpp \
+    audio/zaudioplaythread.cpp \
+    audio/znoisecutthread.cpp \
+    audio/webrtc/analog_agc.c \
+    audio/webrtc/complex_bit_reverse.c \
+    audio/webrtc/complex_fft.c \
+    audio/webrtc/copy_set_operations.c \
+    audio/webrtc/cross_correlation.c \
+    audio/webrtc/digital_agc.c \
+    audio/webrtc/division_operations.c \
+    audio/webrtc/dot_product_with_scale.c \
+    audio/webrtc/downsample_fast.c \
+    audio/webrtc/energy.c \
+    audio/webrtc/fft4g.c \
+    audio/webrtc/get_scaling_square.c \
+    audio/webrtc/min_max_operations.c \
+    audio/webrtc/noise_suppression_x.c \
+    audio/webrtc/noise_suppression.c \
+    audio/webrtc/ns_core.c \
+    audio/webrtc/nsx_core_c.c \
+    audio/webrtc/nsx_core_neon_offsets.c \
+    audio/webrtc/nsx_core.c \
+    audio/webrtc/real_fft.c \
+    audio/webrtc/resample_48khz.c \
+    audio/webrtc/resample_by_2_internal.c \
+    audio/webrtc/resample_by_2_mips.c \
+    audio/webrtc/resample_by_2.c \
+    audio/webrtc/resample_fractional.c \
+    audio/webrtc/resample.c \
+    audio/webrtc/ring_buffer.c \
+    audio/webrtc/spl_init.c \
+    audio/webrtc/spl_sqrt_floor.c \
+    audio/webrtc/spl_sqrt.c \
+    audio/webrtc/splitting_filter.c \
+    audio/webrtc/vector_scaling_operations.c \
+    audio/bevis/fft.cpp \
+    audio/bevis/WindNSManager.cpp \
+    audio/zpcmencthread.cpp \
+    audio/ztcpdumpthread.cpp \
+    audio/zaudiotask.cpp \
+    zavui.cpp \
+    xyseriesiodevice.cpp
+
 
 HEADERS += \
-    zcamdevice.h \
-    zfiltecamdev.h \
     zgblpara.h \
-    zimgcapthread.h \
-    zimgprocessthread.h \
-    zalgorithmset.h \
-    zhistogram.h \
-    zimgfeaturedetectmatch.h \
-    zmaintask.h \
-    zimgdisplayer.h \
-    zh264encthread.h \
-    ztcp2uartforwardthread.h \
-    zvideotxthread.h
+    video/zcamdevice.h \
+    video/zfiltecamdev.h \
+    video/zimgcapthread.h \
+    video/zimgprocessthread.h \
+    video/zalgorithmset.h \
+    video/zhistogram.h \
+    video/zimgfeaturedetectmatch.h \
+    video/zimgdisplayer.h \
+    video/zh264encthread.h \
+    video/zvideotxthread.h \
+    video/zvideotask.h \
+    forward/ztcp2uartforwardthread.h \
+    audio/zaudiocapturethread.h \
+    audio/zaudioplaythread.h \
+    audio/znoisecutthread.h \
+    audio/webrtc/analog_agc.h \
+    audio/webrtc/complex_fft_tables.h \
+    audio/webrtc/cpu_features_wrapper.h \
+    audio/webrtc/defines.h \
+    audio/webrtc/digital_agc.h \
+    audio/webrtc/fft4g.h \
+    audio/webrtc/gain_control.h \
+    audio/webrtc/noise_suppression_x.h \
+    audio/webrtc/noise_suppression.h \
+    audio/webrtc/ns_core.h \
+    audio/webrtc/nsx_core.h \
+    audio/webrtc/nsx_defines.h \
+    audio/webrtc/real_fft.h \
+    audio/webrtc/resample_by_2_internal.h \
+    audio/webrtc/ring_buffer.h \
+    audio/webrtc/signal_processing_library.h \
+    audio/webrtc/spl_inl.h \
+    audio/webrtc/typedefs.h \
+    audio/webrtc/windows_private.h \
+    audio/bevis/fft.h \
+    audio/bevis/common.h \
+    audio/bevis/WindNSManager.h \
+    audio/zpcmencthread.h \
+    audio/ztcpdumpthread.h \
+    audio/zaudiotask.h \
+    zavui.h \
+    xyseriesiodevice.h
+
 
 RESOURCES += \
     resource.qrc
@@ -62,3 +136,8 @@ LIBS += -ljpeg -lx264
 
 INCLUDEPATH += /home/zhangshaoyan/NoiseReduction/jrtplib-3.11.1/src  /home/zhangshaoyan/NoiseReduction/jrtplib-3.11.1/build/src
 LIBS += -L/home/zhangshaoyan/NoiseReduction/jrtplib-3.11.1/build/src -ljrtp
+
+LIBS += -lasound -lopus
+
+INCLUDEPATH += /home/zhangshaoyan/NoiseReduction/librnnoise/include
+LIBS += -L/home/zhangshaoyan/NoiseReduction/librnnoise/lib64 -lrnnoise

@@ -4,6 +4,40 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <QFile>
+ZAudioParam::ZAudioParam()
+{
+    this->m_bCapThreadExitFlag=false;//ALSA capture thread.
+    this->m_bCutThreadExitFlag=false;//Noise Suppression thread.
+    this->m_bPlayThreadExitFlag=false;//Local playback thread.
+    this->m_bPCMEncThreadExitFlag=false;//Opus encode thread.
+    this->m_bTcpDumpThreadExitFlag=false;//Audio Tx Tcp thread.
+
+    //run mode.
+    //0:Only do capture and write pcm to wav file.
+    //1:realtime stream process,capture-process-playback.
+    //1 at default.
+    this->m_runMode=1;
+
+    //capture audio sample rate.
+    this->m_nCaptureSampleRate=48000;
+    //playback audio sample rate.
+    this->m_nPlaybackSampleRate=48000;
+    //channel number for capture & playback.
+    this->m_nChannelNum=2;
+    //de-noise control.
+    this->m_nDeNoiseMethod=0;
+
+    this->m_nGaindB=0;
+    this->m_nBevisGrade=1;
+    //capture thread thread buffer overrun.
+    this->m_nCapOverrun=0;
+    //playback thread buffer underrun.
+    this->m_nPlayUnderrun=0;
+
+    //同一时刻我们仅允许一个audio tcp客户端连接.
+    this->m_bTcpAudioConnected=false;
+}
+
 ZGblPara gGblPara;
 ZGblPara::ZGblPara()
 {
@@ -31,6 +65,8 @@ ZGblPara::ZGblPara()
 
     this->m_bTcpClientConnected=false;
     this->m_bTcp2UartConnected=false;
+    this->m_nTcp2UartBytes=0;
+    this->m_nUart2TcpBytes=0;
 }
 ZGblPara::~ZGblPara()
 {
@@ -86,6 +122,15 @@ void ZGblPara::readCfgFile()
     iniFile.beginGroup("UART");
     gGblPara.m_uartName=iniFile.value("name","ttyS4").toString();
     iniFile.endGroup();
+
+    iniFile.beginGroup("Capture");
+    this->m_audio.m_capCardName=iniFile.value("Name","plughw:CARD=USB20,DEV=0").toString();
+    iniFile.endGroup();
+
+    iniFile.beginGroup("Playback");
+    this->m_audio.m_playCardName=iniFile.value("Name","plughw:CARD=USB20,DEV=1").toString();
+    iniFile.endGroup();
+
     if(this->m_bVerbose)
     {
         qDebug()<<"CAM1 parameters:";
@@ -127,6 +172,14 @@ void ZGblPara::writeCfgFile()
     iniFile.beginGroup("UART");
     iniFile.setValue("name",gGblPara.m_uartName);
     iniFile.endGroup();
+
+    iniFile.beginGroup("Capture");
+    iniFile.setValue("Name",this->m_audio.m_capCardName);
+    iniFile.endGroup();
+
+    iniFile.beginGroup("Playback");
+    iniFile.setValue("Name",this->m_audio.m_playCardName);
+    iniFile.endGroup();
 }
 void ZGblPara::resetCfgFile()
 {
@@ -149,6 +202,9 @@ void ZGblPara::resetCfgFile()
 
     gGblPara.m_uartName=QString("ttyS4");
 
+    //audio.
+    this->m_audio.m_capCardName=QString("plughw:CARD=PCH,DEV=0");
+    this->m_audio.m_playCardName=QString("plughw:CARD=PCH,DEV=0");
 
     this->writeCfgFile();
 }

@@ -379,10 +379,8 @@ void ZImgCapThread::run()
             this->m_queueDisp->enqueue(newQImg);
             this->m_semaDispUsed->release();//已用信号量加1.
         }
-
-        //usleep(1000*30);//30ms.
 #endif
-        this->usleep(1000);//1000us.
+        this->usleep(VIDEO_THREAD_SCHEDULE_US);
     }
     //do some clean. stop camera.
     camDev->ZStopCapture();

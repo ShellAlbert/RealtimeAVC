@@ -2,6 +2,7 @@
 #include <zgblpara.h>
 #include <sys/socket.h>
 #include <iostream>
+#if 0
 #include "rtpsession.h"
 #include "rtpudpv4transmitter.h"
 #include "rtpipv4address.h"
@@ -87,7 +88,7 @@ void rtpPrintf(unsigned char *buf, unsigned int len)
 
     printf("\n");
 }
-
+#endif
 ZVideoTxThread::ZVideoTxThread()
 {
     this->m_queue=NULL;
@@ -209,7 +210,7 @@ void ZVideoTxThread::run()
                     }
                     tcpSocket->waitForBytesWritten(1000);
                     //qDebug()<<"tx h264:"<<baH264Data.size();
-                    this->usleep(1000);//1000us.
+                    this->usleep(VIDEO_THREAD_SCHEDULE_US);
                 }
                 //设置连接标志，这样编码器线程就会停止工作.
                 gGblPara.m_bTcpClientConnected=false;

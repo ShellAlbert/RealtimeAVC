@@ -196,7 +196,7 @@ void ZImgProcessThread::run()
             this->ZDoPSNRAndSSIM(mat1,mat2);
         }
         //qDebug()<<"processed 2 images.";
-        this->usleep(1000);//1000us.
+        this->usleep(VIDEO_THREAD_SCHEDULE_US);
     }
     qDebug()<<"<MainLoop>:ImgProcessThread ends.";
     //此处设置本线程退出标志.

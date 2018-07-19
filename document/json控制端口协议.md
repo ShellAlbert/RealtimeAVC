@@ -13,12 +13,15 @@
 	"ImgPro":"on/off/query"  请求开启/关闭/查询图像处理功能  
 	"RTC":"2018/07/19 14:26:53"  请求更新ARMLinux的硬件时间  
 	"DeNoise":"off/RNNoise/WebRTC/Bevis"  请求关闭或打开音频噪声抑制算法  
+	"BevisGrade":"1/2/3/4"  设置Bevis降噪算法等级  
+	"DGain":"[0~90]/query"  设置音频数字增益,有效范围[0~90],query为查询当前值    
 }  
 ## 2.ARMLinux返回响应结果  
 {  
 	"ImgPro":"on/off"  返回当前图像处理功能的状态是开启还是关闭  
 	"RTC":"2018/07/19 14:26:54"  返回当前设备的RTC时间   
 	"DeNoise":"off/RNNoise/WebRTC/Bevis"  返回音频噪声抑制算法的当前状态  
-	
+	"BevisGrade":"1/2/3/4"  返回Bevis降噪算法等级  
+	"DGain":"off/[0~90]"  返回数字增益当前值  
 }    
 

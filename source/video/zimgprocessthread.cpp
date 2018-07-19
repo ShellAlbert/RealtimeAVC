@@ -531,13 +531,13 @@ void ZImgProcessThread::ZSlotReadUARTData()
         if(this->m_baUARTRecvBuf.contains("start"))
         {
             //set global start flag to cause other thread to start.
-            gGblPara.m_bGblStartFlag=true;
+            gGblPara.m_bJsonImgPro=true;
 
             this->m_baUARTRecvBuf.clear();
         }else if(this->m_baUARTRecvBuf.contains("stop"))
         {
             //reset global start flag to cause other thread to stop.
-            gGblPara.m_bGblStartFlag=false;
+            gGblPara.m_bJsonImgPro=false;
 
             this->m_baUARTRecvBuf.clear();
         }

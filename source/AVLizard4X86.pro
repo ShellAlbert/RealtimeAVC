@@ -78,7 +78,8 @@ SOURCES += \
     audio/ztcpdumpthread.cpp \
     audio/zaudiotask.cpp \
     zavui.cpp \
-    xyseriesiodevice.cpp
+    xyseriesiodevice.cpp \
+    ctl/zctlthread.cpp
 
 
 HEADERS += \
@@ -124,7 +125,8 @@ HEADERS += \
     audio/ztcpdumpthread.h \
     audio/zaudiotask.h \
     zavui.h \
-    xyseriesiodevice.h
+    xyseriesiodevice.h \
+    ctl/zctlthread.h
 
 
 RESOURCES += \

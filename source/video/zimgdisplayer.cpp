@@ -194,7 +194,10 @@ void ZImgDisplayer::paintEvent(QPaintEvent *e)
     Q_UNUSED(e);
 
     QImage newImg;
-    this->m_semaUsed->acquire();//已用信号量减1.
+    if(!this->m_semaUsed->tryAcquire())//已用信号量减1,这里使用tryAcquire()防止阻塞.
+    {
+        return;
+    }
     newImg=this->m_queue->dequeue();
     this->m_semaFree->release();//空闲信号量加1.
 

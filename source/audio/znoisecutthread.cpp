@@ -176,11 +176,17 @@ void ZNoiseCutThread::run()
         baPCMData=this->m_queueNoise->dequeue();
         this->m_semaFreeNoise->release();//空闲信号量加1
 
+        //只有开启本地UI刷新才将采集到的声音数据扔入wavBefore队列.
         //将未处理过的数据投入before队列，用于本地波形显示.
-        if(this->m_semaFreeWavBefore->tryAcquire())
+        if(gGblPara.m_bJsonFlushUI)
         {
-            this->m_queueWavBefore->enqueue(baPCMData);
-            this->m_semaUsedWavBefore->release();
+            if(this->m_semaFreeWavBefore->tryAcquire())
+            {
+                this->m_queueWavBefore->enqueue(baPCMData);
+                this->m_semaUsedWavBefore->release();
+            }else{
+                qDebug()<<"<Warning>:audio wavBefore queue is full,trash new captured pcm.";
+            }
         }
 #if 0
         //Automatic gain control from WebRTC for all algorithms.
@@ -392,26 +398,39 @@ void ZNoiseCutThread::run()
 #endif
 #if 1
         //put data to clear queue.
-        this->m_semaFreeClear->acquire();//空闲信号量减1.
-        this->m_queueClear->enqueue(baPCMData);
-        this->m_semaUsedClear->release();//已用信号量加1.
+        if(this->m_semaFreeClear->tryAcquire())//空闲信号量减1,这里使用try防止阻塞.
+        {
+            this->m_queueClear->enqueue(baPCMData);
+            this->m_semaUsedClear->release();//已用信号量加1.
+        }else{
+            qDebug()<<"<Warning>:audio clear queue is full,trash new captured pcm.";
+        }
 #endif
 #if 1
         //put data into encode queue.
         //当有客户端连接上时，才将采集到的数据放到编码队列，否则并不投入数据.
         if(gGblPara.m_bTcpClientConnected)
         {
-            this->m_semaFreeEncode->acquire();//空闲信号量减1
-            this->m_queueEncode->enqueue(baPCMData);
-            this->m_semaUsedEncode->release();//已用信号量加1.
+            if(this->m_semaFreeEncode->tryAcquire())//空闲信号量减1,这里使用try防止阻塞.
+            {
+                this->m_queueEncode->enqueue(baPCMData);
+                this->m_semaUsedEncode->release();//已用信号量加1.
+            }else{
+                qDebug()<<"<Warning>:audio encode queue is full,trash new captured pcm.";
+            }
         }
 #endif
 #if 1
         //将未处理过的数据投入after队列，用于本地波形显示.
-        if(this->m_semaFreeWavAfter->tryAcquire())
+        if(gGblPara.m_bJsonFlushUI)
         {
-            this->m_queueWavAfter->enqueue(baPCMData);
-            this->m_semaUsedWavAfter->release();
+            if(this->m_semaFreeWavAfter->tryAcquire())
+            {
+                this->m_queueWavAfter->enqueue(baPCMData);
+                this->m_semaUsedWavAfter->release();
+            }else{
+                qDebug()<<"<Warning>:audio wavAfter queue is full,trash new captured pcm.";
+            }
         }
 #endif
         this->usleep(AUDIO_THREAD_SCHEDULE_US);

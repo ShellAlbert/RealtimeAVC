@@ -192,16 +192,16 @@ ZImgCapThread::ZImgCapThread(QString devNodeName,qint32 nPreWidth,qint32 nPreHei
 
     //capture image to local display queue.
     this->m_queueDisp=NULL;
-     this->m_semaDispUsed=NULL;
-     this->m_semaDispFree=NULL;
+    this->m_semaDispUsed=NULL;
+    this->m_semaDispFree=NULL;
     //capture image to process queue.
-     this->m_queueProcess=NULL;
-     this->m_semaProcessUsed=NULL;
-     this->m_semaProcessFree=NULL;
+    this->m_queueProcess=NULL;
+    this->m_semaProcessUsed=NULL;
+    this->m_semaProcessFree=NULL;
     //capture yuv to yuv queue.
-     this->m_queueYUV=NULL;
-     this->m_semaYUVUsed=NULL;
-     this->m_semaYUVFree=NULL;
+    this->m_queueYUV=NULL;
+    this->m_semaYUVUsed=NULL;
+    this->m_semaYUVFree=NULL;
 
     this->m_bExitFlag=false;
 }
@@ -347,10 +347,14 @@ void ZImgCapThread::run()
         //只有当有客户端连接时,才将yuv数据扔入yuv队列中,促使编码线程工作.
         if(this->m_bMainCamera && gGblPara.m_bTcpClientConnected)
         {
-            QByteArray baYUVData((const char*)pYUVData,nLen);
-            this->m_semaYUVFree->acquire();//空闲信号量减1.
-            this->m_queueYUV->enqueue(baYUVData);
-            this->m_semaYUVUsed->release();//已用信号量加1.
+            if(this->m_semaYUVFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
+            {
+                QByteArray baYUVData((const char*)pYUVData,nLen);
+                this->m_queueYUV->enqueue(baYUVData);
+                this->m_semaYUVUsed->release();//已用信号量加1.
+            }else{
+                qDebug()<<"<Warning>:YUV queue is full,trash new captured image.";
+            }
         }
 #endif
         //convert yuv to RGB.
@@ -366,18 +370,29 @@ void ZImgCapThread::run()
             qDebug()<<"<TS>:"<<this->m_devName<<" end at "<<nEndTs<<",cost "<<nEndTs-nStartTs<<"ms";
         }
 
-        //put QImage to QImage queue for ImgProcessThread.
-        if(this->m_semaProcessFree->tryAcquire())//空闲信号量减1.
+        //只有当开启ImgPro标志位被置位时（通过Android Json协议).
+        //采集线程才将图像扔入process队列，从而唤醒图像处理线程工作.
+        if(gGblPara.m_bJsonImgPro)
         {
-            this->m_queueProcess->enqueue(newQImg);
-            this->m_semaProcessUsed->release();//已用信号量加1.
+            if(this->m_semaProcessFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
+            {
+                this->m_queueProcess->enqueue(newQImg);
+                this->m_semaProcessUsed->release();//已用信号量加1.
+            }else{
+                qDebug()<<"<Warning>:ImgProcess queue is full,trash new captured image.";
+            }
         }
 #if 1
-        //put QImage to local queue for LocalDisplay.
-        if(this->m_semaDispFree->tryAcquire())//空闲信号量减1.
+        //只有开启本地UI刷新才将采集到的图像扔入disp队列.
+        if(gGblPara.m_bJsonFlushUI)
         {
-            this->m_queueDisp->enqueue(newQImg);
-            this->m_semaDispUsed->release();//已用信号量加1.
+            if(this->m_semaDispFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
+            {
+                this->m_queueDisp->enqueue(newQImg);
+                this->m_semaDispUsed->release();//已用信号量加1.
+            }else{
+                qDebug()<<"<Warning>:LocalDisp queue is full,trash new captured image.";
+            }
         }
 #endif
         this->usleep(VIDEO_THREAD_SCHEDULE_US);

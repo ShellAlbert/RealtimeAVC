@@ -31,15 +31,15 @@ void gSIGHandler(int sigNo)
 int main(int argc,char **argv)
 {
     QApplication app(argc,argv);
-     ///////////////////////////////////////////////////////
-     //parse audio command line arguments.
-     QCommandLineOption opMode("mode","0:capture to file,1:realtime process,default is 1.","runMode","1");
-     QCommandLineOption opInRate("inRate","specified the capture input sample rate,default is 48000.","inRate","48000");
-     QCommandLineOption opOutRate("outRate","specified the playback output sample rate,default is 48000.","outRate","48000");
-     QCommandLineOption opChannels("channels","specified the channel number for Capture & Playback,1 for Mono,2 for Stereo,default is 2.","channels","2");
-     QCommandLineOption opDeNoise("denoise","de-noise ctrl,0:off,1:RNNoise,2:WebRTC,3:Bevis,default is 0.","denoise","0");
-     QCommandLineOption opGaindB("gaindB","compression gain dB range [0,90],default is 0.","gaindB","0");
-     QCommandLineOption opBevisGrade("grade","Bevis:noise reduction grade,range:1~4,default is 1.","grade","1");
+    ///////////////////////////////////////////////////////
+    //parse audio command line arguments.
+    QCommandLineOption opMode("mode","0:capture to file,1:realtime process,default is 1.","runMode","1");
+    QCommandLineOption opInRate("inRate","specified the capture input sample rate,default is 48000.","inRate","48000");
+    QCommandLineOption opOutRate("outRate","specified the playback output sample rate,default is 48000.","outRate","48000");
+    QCommandLineOption opChannels("channels","specified the channel number for Capture & Playback,1 for Mono,2 for Stereo,default is 2.","channels","2");
+    QCommandLineOption opDeNoise("denoise","de-noise ctrl,0:off,1:RNNoise,2:WebRTC,3:Bevis,default is 0.","denoise","0");
+    QCommandLineOption opGaindB("gaindB","compression gain dB range [0,90],default is 0.","gaindB","0");
+    QCommandLineOption opBevisGrade("grade","Bevis:noise reduction grade,range:1~4,default is 1.","grade","1");
     //parse video command line arguments.
     QCommandLineOption opDebug("debug","enable debug mode,output more messages.");
     QCommandLineOption opVerbose("verbose","enable verbose mode.");
@@ -129,23 +129,23 @@ int main(int argc,char **argv)
     }
     if(cmdLineParser.isSet(opSpeed))
     {
-       gGblPara.m_bTransferSpeedMonitor=true;
+        gGblPara.m_bTransferSpeedMonitor=true;
     }
     if(cmdLineParser.isSet(opTransfer))
     {
-       gGblPara.m_bTransfer2PC=true;
+        gGblPara.m_bTransfer2PC=true;
     }
     if(cmdLineParser.isSet(opUART))
     {
-       gGblPara.m_bDumpUART=true;
+        gGblPara.m_bDumpUART=true;
     }
     if(cmdLineParser.isSet(opXMode))
     {
-       gGblPara.m_bXMode=true;
+        gGblPara.m_bXMode=true;
     }
     if(cmdLineParser.isSet(opFMode))
     {
-       gGblPara.m_bFMode=true;
+        gGblPara.m_bFMode=true;
     }
 
     //这里作一个优先级判断，若xMode和fMode同时启动，则只启动fMode

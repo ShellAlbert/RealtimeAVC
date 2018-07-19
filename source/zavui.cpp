@@ -49,7 +49,7 @@ ZAVUI::ZAVUI(QWidget *parent):QFrame(parent)
     this->m_llRunSec->setText(tr("Accumulated\n[0H0M0S]"));
     this->m_llState=new QLabel;
     this->m_llState->setAlignment(Qt::AlignCenter);
-    this->m_llState->setText(tr("State\n[Stop]"));
+    this->m_llState->setText(tr("ImgPro\n[Pause]"));
     //透传数据统计Android(tcp) <--> STM32(uart).
     this->m_llForward=new QLabel;
     this->m_llForward->setAlignment(Qt::AlignCenter);
@@ -209,12 +209,12 @@ void ZAVUI::ZSlot1sTimeout()
 
     this->m_llRunSec->setText(tr("Accumulated\n%1H%2M%3S").arg(nHour).arg(nMinute).arg(nSecond));
 
-    //check global start flag.
-    if(gGblPara.m_bGblStartFlag)
+    //ImgPro on/off.
+    if(gGblPara.m_bJsonImgPro)
     {
-        this->m_llState->setText(tr("State\n[Running]"));
+        this->m_llState->setText(tr("ImgPro\n[Running]"));
     }else{
-        this->m_llState->setText(tr("State\n[Stop]"));
+        this->m_llState->setText(tr("ImgPro\n[Pause]"));
     }
 
     //update the andorid(tcp) <--> STM32(uart) bytes.
@@ -234,6 +234,10 @@ void ZAVUI::ZSlot1sTimeout()
     }
 
     QString ctlClient("X");
+    if(gGblPara.m_bCtlClientConnected)
+    {
+        ctlClient="V";
+    }
 
     QString forwardClient("X");
     if(gGblPara.m_bTcp2UartConnected)

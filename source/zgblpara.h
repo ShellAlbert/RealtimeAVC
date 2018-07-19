@@ -182,11 +182,6 @@ public:
     //the global request to exit flag.
     //it will cause every thread occurs errors.
     bool m_bGblRst2Exit;
-
-public:
-    //global start or stop flag.
-    bool m_bGblStartFlag;
-
 public:
     //主摄像头采集线程.
     bool m_bMainCapThreadExitFlag;
@@ -212,6 +207,16 @@ public:
     qint64 m_nTcp2UartBytes;
     qint64 m_nUart2TcpBytes;
 
+public:
+    //控制端口线程.
+    bool m_bCtlThreadExitFlag;
+    bool m_bCtlClientConnected;
+
+
+public:
+    //JSON协议控制标志位.
+    bool m_bJsonImgPro;//ImgPro图像比对启停控制标志位.
+    bool m_bJsonFlushUI;//是否刷新本地UI.
 public:
     //audio related parameters.
     ZAudioParam m_audio;

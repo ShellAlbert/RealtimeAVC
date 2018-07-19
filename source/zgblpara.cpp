@@ -53,8 +53,6 @@ ZGblPara::ZGblPara()
     this->m_bFMode=false;
 
     this->m_bGblRst2Exit=false;
-    this->m_bGblStartFlag=false;
-
 
     this->m_bMainCapThreadExitFlag=false;
     this->m_bAuxCapThreadExitFlag=false;
@@ -67,6 +65,15 @@ ZGblPara::ZGblPara()
     this->m_bTcp2UartConnected=false;
     this->m_nTcp2UartBytes=0;
     this->m_nUart2TcpBytes=0;
+
+
+    //控制端口线程.
+    this->m_bCtlThreadExitFlag=false;
+    this->m_bCtlClientConnected=false;
+
+    //json control flags.
+    this->m_bJsonImgPro=false;
+    this->m_bJsonFlushUI=false;
 }
 ZGblPara::~ZGblPara()
 {

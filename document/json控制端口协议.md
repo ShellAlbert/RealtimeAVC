@@ -1,19 +1,21 @@
 ﻿# json控制端口协议
 >tcp流边界:length+json data
-# json协议规定
+>采用request-response通信方式，Android端作为请求方，ARMLinux端作为应答方。  
+# json协议格式规定
 {
 	"name":"zhangshaoyan",   
 	"age":30,  
 	"country":"America"  
 }  
 # json协议
-## 1.开启/停止图像比对,查询当前状态
+## 1.Android请求设置数据  
 {  
-	"DiffXYT":"on"  
-	"DiffXYT":"off"  
-	"DiffXYT":"query"  
+	"ImgPro":"on/off/query"  请求开启/关闭/查询图像处理功能  
+	"RTC":"2018/07/19 14:26:53"  请求更新ARMLinux的硬件时间  
+}  
+## 2.ARMLinux返回响应结果  
+{  
+	"ImgPro":"on/off"  返回当前图像处理功能的状态是开启还是关闭  
+	"RTC":"2018/07/19 14:26:54"  返回当前设备的RTC时间  
 }    
-## 2.查询终端信息 
-{
-	""
-}
+

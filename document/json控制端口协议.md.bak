@@ -1,19 +1,20 @@
-# json���ƶ˿�Э��
->tcp���߽�:length+json data
-# jsonЭ��涨
+﻿# json控制端口协议
+>tcp流边界:length+json data
+>采用request-response通信方式，Android端作为请求方，ARMLinux端作为应答方。  
+# json协议格式规定
 {
 	"name":"zhangshaoyan",   
 	"age":30,  
 	"country":"America"  
 }  
-# jsonЭ��
-## 1.����/ֹͣͼ��ȶ�,��ѯ��ǰ״̬
+# json协议
+## 1.Android请求设置数据  
 {  
-	"DiffXYT":"on"  
-	"DiffXYT":"off"  
-	"DiffXYT":"query"  
+	"ImgPro":"on/off/query"  请求开启/关闭/查询图像处理功能  
+	"RTC":"2018/07/19 14:26:53"  请求更新ARMLinux的硬件时间  
+}  
+## 2.ARMLinux返回响应结果  
+{  
+	"ImgPro":"on/off"  返回当前图像处理功能的状态是开启还是关闭  
 }    
-## 2.��ѯ�ն���Ϣ 
-{
-	""
-}
+

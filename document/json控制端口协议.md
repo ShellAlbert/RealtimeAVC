@@ -2,7 +2,7 @@
 >tcp流边界:length+json data
 >采用request-response通信方式，Android端作为请求方，ARMLinux端作为应答方。  
 # json协议格式规定
-{
+{  
 	"name":"zhangshaoyan",   
 	"age":30,  
 	"country":"America"  
@@ -12,10 +12,13 @@
 {  
 	"ImgPro":"on/off/query"  请求开启/关闭/查询图像处理功能  
 	"RTC":"2018/07/19 14:26:53"  请求更新ARMLinux的硬件时间  
+	"DeNoise":"off/RNNoise/WebRTC/Bevis"  请求关闭或打开音频噪声抑制算法  
 }  
 ## 2.ARMLinux返回响应结果  
 {  
 	"ImgPro":"on/off"  返回当前图像处理功能的状态是开启还是关闭  
-	"RTC":"2018/07/19 14:26:54"  返回当前设备的RTC时间  
+	"RTC":"2018/07/19 14:26:54"  返回当前设备的RTC时间   
+	"DeNoise":"off/RNNoise/WebRTC/Bevis"  返回音频噪声抑制算法的当前状态  
+	
 }    
 

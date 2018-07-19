@@ -21,7 +21,7 @@
 	"ImgPro":"on/off"  返回当前图像处理功能的状态是开启还是关闭  
 	"RTC":"2018/07/19 14:26:54"  返回当前设备的RTC时间   
 	"DeNoise":"off/RNNoise/WebRTC/Bevis"  返回音频噪声抑制算法的当前状态  
-	"BevisGrade":"1/2/3/4"  返回Bevis降噪算法等级设置  
+	"BevisGrade":"1/2/3/4"  返回Bevis降噪算法等级  
 	"DGain":"off/[0~90]"  返回数字增益当前值  
 }    
 

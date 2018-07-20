@@ -36,9 +36,15 @@ ZImgDisplayer::ZImgDisplayer(qint32 nCenterX,qint32 nCenterY,bool bMainCamera,QW
         }
     }
 
-    this->m_queue=NULL;
-    this->m_semaUsed=NULL;
-    this->m_semaFree=NULL;
+    this->m_rbDisp=NULL;
+    this->m_pRGBBuffer=new char[640*480*3*2];
+}
+ZImgDisplayer::~ZImgDisplayer()
+{
+    for(qint32 i=0;i<4;i++)
+    {
+        delete this->m_tbMotorCtl[i];
+    }
 }
 void ZImgDisplayer::ZSetSensitiveRect(QRect rect)
 {
@@ -61,16 +67,9 @@ void ZImgDisplayer::ZSetPaintParameters(QColor colorRect)
 {
     this->m_colorRect=colorRect;
 }
-void ZImgDisplayer::ZBindQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+void ZImgDisplayer::ZBindQueue(ZRingBuffer *rbDisp)
 {
-    this->m_queue=queue;
-    this->m_semaUsed=semaUsed;
-    this->m_semaFree=semaFree;
-
-    //start timer.
-    this->m_timer=new QTimer;
-    QObject::connect(this->m_timer,SIGNAL(timeout()),this,SLOT(ZSlotFetchImg()));
-    this->m_timer->start(30);//30ms.
+    this->m_rbDisp=rbDisp;
     return;
 }
 QSize ZImgDisplayer::sizeHint() const
@@ -183,7 +182,7 @@ void ZImgDisplayer::resizeEvent(QResizeEvent *event)
 
     QWidget::resizeEvent(event);
 }
-void ZImgDisplayer::ZSlotFetchImg()
+void ZImgDisplayer::ZSlotFetchNewImg()
 {
     //paint now.
     this->m_nTriggerCounter++;
@@ -193,13 +192,19 @@ void ZImgDisplayer::paintEvent(QPaintEvent *e)
 {
     Q_UNUSED(e);
 
-    QImage newImg;
-    if(!this->m_semaUsed->tryAcquire())//已用信号量减1,这里使用tryAcquire()防止阻塞.
+
+    if(!this->m_rbDisp->m_semaUsed->tryAcquire())//已用信号量减1,这里使用tryAcquire()防止阻塞.
     {
         return;
     }
-    newImg=this->m_queue->dequeue();
-    this->m_semaFree->release();//空闲信号量加1.
+    qint32 nRGBLen=this->m_rbDisp->ZGetElement((qint8*)this->m_pRGBBuffer,640*480*3*2);
+    this->m_rbDisp->m_semaFree->release();//空闲信号量加1.
+    if(nRGBLen<0)
+    {
+        qDebug()<<"<error>:error RGB length.";
+        return;
+    }
+    QImage newImg((uchar*)this->m_pRGBBuffer,640,480,QImage::Format_RGB888);
 
     QPainter painter(this);
     if(newImg.isNull())

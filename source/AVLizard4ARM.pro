@@ -71,11 +71,12 @@ SOURCES += \
     audio/bevis/fft.cpp \
     audio/bevis/WindNSManager.cpp \
     audio/zpcmencthread.cpp \
-    audio/ztcpdumpthread.cpp \
     audio/zaudiotask.cpp \
     ctl/zctlthread.cpp \
     zavui.cpp \
-    xyseriesiodevice.cpp
+    xyseriesiodevice.cpp \
+    audio/zaudiotxthread.cpp \
+    zringbuffer.cpp
 
 
 HEADERS += \
@@ -118,11 +119,12 @@ HEADERS += \
     audio/bevis/common.h \
     audio/bevis/WindNSManager.h \
     audio/zpcmencthread.h \
-    audio/ztcpdumpthread.h \
     audio/zaudiotask.h \
     ctl/zctlthread.h \
     zavui.h \
-    xyseriesiodevice.h
+    xyseriesiodevice.h \
+    audio/zaudiotxthread.h \
+    zringbuffer.h
 
 
 

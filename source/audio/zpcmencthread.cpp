@@ -11,17 +11,10 @@ ZPCMEncThread::ZPCMEncThread()
 {
     this->m_bRunning=false;
 }
-qint32 ZPCMEncThread::ZStartThread(QQueue<QByteArray> *queueEnc,QSemaphore *semaUsedEnc,QSemaphore *semaFreeEnc,///<
-                                   QQueue<QByteArray> *queueTCP,QSemaphore *semaUsedTCP,QSemaphore *semaFreeTCP)
+qint32 ZPCMEncThread::ZStartThread(ZRingBuffer *rbEncode,ZRingBuffer *rbTx)
 {
-    this->m_queueEnc=queueEnc;
-    this->m_semaUsedEnc=semaUsedEnc;
-    this->m_semaFreeEnc=semaFreeEnc;
-    ////////////////////////////////////
-    this->m_queueTCP=queueTCP;
-    this->m_semaUsedTCP=semaUsedTCP;
-    this->m_semaFreeTCP=semaFreeTCP;
-
+    this->m_rbEncode=rbEncode;
+    this->m_rbTx=rbTx;
     /////////////////
     this->start();
 
@@ -38,6 +31,7 @@ bool ZPCMEncThread::ZIsRunning()
 }
 void ZPCMEncThread::run()
 {
+
     char *pEncBuffer=new char[BLOCK_SIZE];
     char *pOpusTails=new char[OPUS_BLKFRM_SIZEx2];
     qint32 nOpusTailsLen=0;
@@ -188,17 +182,24 @@ void ZPCMEncThread::run()
       * @returns The length of the encoded packet (in bytes) on success or a
       *          negative error code (see @ref opus_errorcodes) on failure.
       */
+    //hold the pcm data.
+    char *pPCMBuffer=new char[BLOCK_SIZE];
+    qint32 nPCMLen=0;
 
     qDebug()<<"<MainLoop>:PCMEncThread starts.";
     while(!gGblPara.m_bGblRst2Exit)
     {
-        //fetch data from queue.
-        QByteArray baPCMData;
-        this->m_semaUsedEnc->acquire();//已用信号量减1
-        baPCMData=this->m_queueEnc->dequeue();
-        this->m_semaFreeEnc->release();//空闲信号量加1
+        //fetch data from encode queue.
+        if(!this->m_rbEncode->m_semaUsed->tryAcquire())//已用信号量减1
+        {
+            this->usleep(AUDIO_THREAD_SCHEDULE_US);
+            continue;
+        }
+        nPCMLen=this->m_rbEncode->ZGetElement((qint8*)pPCMBuffer,BLOCK_SIZE);
+        this->m_rbEncode->m_semaFree->release();//空闲信号量加1
+
         //encode pcm to opus.
-        qint32 nNewPCMBytes=baPCMData.size();
+        qint32 nNewPCMBytes=nPCMLen;
         qint32 nPaddingBytes=0;
         //如果小尾巴缓冲区有数据，则从新数据中复制一段至小尾巴缓冲区，拼成完整一帧，然后编码。
         if(nOpusTailsLen>0)
@@ -208,7 +209,7 @@ void ZPCMEncThread::run()
             if(nPaddingBytes>=0)
             {
                 //将新的PCM数据复制一段至小尾巴缓冲区拼成一帧.
-                memcpy(pOpusTails+nOpusTailsLen,baPCMData.data(),nPaddingBytes);
+                memcpy(pOpusTails+nOpusTailsLen,pPCMBuffer,nPaddingBytes);
 
                 //执行编码操作.
                 //48000Hz,2 Channels.
@@ -229,11 +230,14 @@ void ZPCMEncThread::run()
 
                     //qDebug()<<"we need "<<nPaddingBytes<<",new pcm remaings:"<<nNewPCMBytes;
 
-                    //after encode,fill data to tcp queue.
-                    QByteArray newPCMData(pEncBuffer,nBytes);
-                    this->m_semaFreeTCP->acquire();//空闲信号量减1
-                    this->m_queueTCP->enqueue(newPCMData);
-                    this->m_semaUsedTCP->release();//已用信号量加1
+                    //after encode,put opus data into tx queue.
+                    if(this->m_rbTx->m_semaFree->tryAcquire())//空闲信号量减1.
+                    {
+                        this->m_rbTx->ZPutElement((qint8*)pEncBuffer,nBytes);
+                        this->m_rbTx->m_semaUsed->release();//已用信号量加1.
+                    }else{
+                        qDebug()<<"<Warning>:opus tcp queue is full,trash new frame.";
+                    }
                 }
             }
             //reset.
@@ -268,7 +272,7 @@ void ZPCMEncThread::run()
             //当T0=40.0ms时，则有采样数量N=T0/T=40.0ms/(1/48ms)=1920.
             //当T0=60.0ms时，则有采样数量N=T0/T=60.0ms/(1/48ms)=2880.
 
-            const opus_int16 *pcmData=(int16_t*)(baPCMData.data()+nPaddingBytes+nOffsetIndex);
+            const opus_int16 *pcmData=(int16_t*)(pPCMBuffer+nPaddingBytes+nOffsetIndex);
             qint32 nBytes=opus_multistream_encode(encoder,pcmData,OPUS_SAMPLE_FRMSIZE,(unsigned char*)pEncBuffer,BLOCK_SIZE);
             //qint32 nBytes=opus_multistream_encode_float(encoder,(const float *)pcmData,OPUS_SAMPLE_FRMSIZE,(unsigned char*)pEncBuffer,BLOCK_SIZE);
             if(nBytes<0)
@@ -276,11 +280,14 @@ void ZPCMEncThread::run()
                 qDebug()<<"<error>:error at opus_encode(),"<<opus_strerror(nBytes);
             }else{
                 //qDebug()<<"<opus>:encode okay,pcm="<<OPUS_SAMPLE_FRMSIZE<<",opus="<<nBytes;
-                //fill data to tcp queue.
-                QByteArray newPCMData(pEncBuffer,nBytes);
-                this->m_semaFreeTCP->acquire();//空闲信号量减1.
-                this->m_queueTCP->enqueue(newPCMData);
-                this->m_semaUsedTCP->release();//已用信号量加1.
+                //after encode,put opus data into tx queue.
+                if(this->m_rbTx->m_semaFree->tryAcquire())//空闲信号量减1.
+                {
+                    this->m_rbTx->ZPutElement((qint8*)pEncBuffer,nBytes);
+                    this->m_rbTx->m_semaUsed->release();//已用信号量加1.
+                }else{
+                    qDebug()<<"<Warning>:opus tcp queue is full,trash new frame.";
+                }
             }
             nOffsetIndex+=OPUS_BLKFRM_SIZEx2;//OPUS_BLKFRM_SIZE*CHANNELS_NUM*sizeof(opus_int16);
             //qDebug()<<"offsetIndex="<<nOffsetIndex;
@@ -288,14 +295,12 @@ void ZPCMEncThread::run()
         //如果存在遗留字节则当作小尾巴处理，复制到尾巴缓冲区作为下一帧数据的头部数据
         if(nRemainBytes>0)
         {
-            char *pTailBytes=(char*)(baPCMData.data()+nPaddingBytes+nOffsetIndex);
+            char *pTailBytes=(char*)(pPCMBuffer+nPaddingBytes+nOffsetIndex);
             memcpy(pOpusTails,pTailBytes,nRemainBytes);
             nOpusTailsLen=nRemainBytes;
             //qDebug()<<"hold remaing "<<nRemainBytes;
         }
-        this->usleep(AUDIO_THREAD_SCHEDULE_US);
     }
-    //opus_encoder_destroy(encoder);
     opus_multistream_encoder_destroy(encoder);
     delete [] pOpusTails;
     //set exit flag to help other thread to exit.

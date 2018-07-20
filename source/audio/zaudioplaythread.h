@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <alsa/asoundlib.h>
-
+#include <zringbuffer.h>
 class ZAudioPlayThread : public QThread
 {
     Q_OBJECT
@@ -17,7 +17,7 @@ public:
     ZAudioPlayThread(QString playCardName);
     ~ZAudioPlayThread();
 
-    qint32 ZStartThread(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
+    qint32 ZStartThread(ZRingBuffer *rbClear);
     qint32 ZStopThread();
     bool ZIsRunning();
 protected:
@@ -33,11 +33,7 @@ private:
 private:
     QString m_playCardName;
     snd_pcm_t *m_pcmHandle;
-
-    QQueue<QByteArray> *m_queue;
-    QSemaphore *m_semaUsed;
-    QSemaphore *m_semaFree;
-
+    ZRingBuffer *m_rbClear;
     char *m_pcmBuffer;
 };
 

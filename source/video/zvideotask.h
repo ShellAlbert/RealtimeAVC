@@ -20,6 +20,7 @@
 #include <forward/ztcp2uartforwardthread.h>
 
 #include "zgblpara.h"
+#include <zringbuffer.h>
 
 class ZVideoTask : public QObject
 {
@@ -27,10 +28,14 @@ class ZVideoTask : public QObject
 public:
     explicit ZVideoTask(QObject *parent = nullptr);
     ~ZVideoTask();
-    qint32 ZBindMainDispQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
-    qint32 ZBindAuxDispQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
+    qint32 ZBindMainDispQueue(ZRingBuffer *rbDispMain);
+    qint32 ZBindAuxDispQueue(ZRingBuffer *rbDispAux);
     qint32 ZBindImgProcessedSet(QQueue<ZImgProcessedSet> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
+    qint32 ZDoInit();
     qint32 ZStartTask();
+
+    ZImgCapThread* ZGetImgCapThread(qint32 index);
+    ZImgProcessThread* ZGetImgProcessThread();
 signals:
 
 public slots:
@@ -45,39 +50,27 @@ private:
 
     //Main CaptureThread put QImage to this queue.
     //Main View Display UI get QImage from this queue for local display.
-    QQueue<QImage> *m_queueMainDisp;
-    QSemaphore *m_semaMainDispUsed;
-    QSemaphore *m_semaMainDispFree;
+    ZRingBuffer *m_rbDispMain;
 
     //Aux CaptureThread put QImage to this queue.
     //Aux View Display UI get QImage from this queue for local display.
-    QQueue<QImage> *m_queueAuxDisp;
-    QSemaphore *m_semaAuxDispUsed;
-    QSemaphore *m_semaAuxDispFree;
+    ZRingBuffer *m_rbDispAux;
 
     //Main CaptureThread put QImage to this queue.
     //ImgProcessThread get QImage from this queue.
-    QQueue<QImage> *m_queueMainProcess;
-    QSemaphore *m_semaMainProcessUsed;
-    QSemaphore *m_semaMainProcessFree;
+    ZRingBuffer *m_rbProcessMain;
 
     //Aux CaptureThread put QImage to this queue.
     //ImgProcessThread get QImage from this queue.
-    QQueue<QImage> *m_queueAuxProcess;
-    QSemaphore *m_semaAuxProcessUsed;
-    QSemaphore *m_semaAuxProcessFree;
+    ZRingBuffer *m_rbProcessAux;
 
     //Main CaptureThread put yuv to this queue.
     //H264 EncodeThread get yuv from this queue.
-    QQueue<QByteArray> *m_queueYUV;
-    QSemaphore *m_semaYUVUsed;
-    QSemaphore *m_semaYUVFree;
+    ZRingBuffer *m_rbYUV;
 
     //H264EncThread put h264 frame to this queue.
     //TcpTxThread get data from this queue.
-    QQueue<QByteArray> *m_queueH264;
-    QSemaphore *m_semaH264Used;
-    QSemaphore *m_semaH264Free;
+    ZRingBuffer *m_rbH264;
 
     //ImgProcessThread put data to this queue.
     //Main UI get data from this queue.

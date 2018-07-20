@@ -17,8 +17,8 @@
 #define DRW_IMG_SIZE_H  500
 
 //use usleep() to reduce cpu heavy load.
-#define AUDIO_THREAD_SCHEDULE_US    (100) //10ms.
-#define VIDEO_THREAD_SCHEDULE_US    (1000*30) //30ms.
+#define AUDIO_THREAD_SCHEDULE_US    (1000*10) //10ms.
+#define VIDEO_THREAD_SCHEDULE_US    (1000*10) //30ms.
 
 /////////////////////////////////////////////////////////////////////////////
 #include <QString>
@@ -78,6 +78,12 @@
 #define SPLIT_IMG_2X2   1
 //Video related parameters.
 
+#define BUFSIZE_1MB     (1*1024*1024)
+#define BUFSIZE_2MB     (2*1024*1024)
+#define BUFSIZE_4MB     (4*1024*1024)
+#define BUFSIZE_8MB     (8*1024*1024)
+#define BUFSIZE_10MB    (10*1024*1024)
+
 //audio related parameters.
 class ZAudioParam
 {
@@ -123,7 +129,7 @@ public:
 
 public:
     //同一时刻我们仅允许一个tcp客户端连接.
-    bool m_bTcpAudioConnected;
+    bool m_bAudioTcpConnected;
 };
 
 class ZGblPara
@@ -197,7 +203,7 @@ public:
 public:
     //图像传输线程.
     bool m_bVideoTxThreadExitFlag;
-    bool m_bTcpClientConnected;
+    bool m_bVideoTcpConnected;
 
 public:
     //Android(tcp) <--> STM32(uart) 串口透传线程相关.

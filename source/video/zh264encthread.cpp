@@ -10,39 +10,29 @@ extern "C"
 ZH264EncThread::ZH264EncThread()
 {
     this->m_bExitFlag=false;
-
-    this->m_queueYUV=NULL;
-    this->m_semaYUVUsed=NULL;
-    this->m_semaYUVFree=NULL;
-
-    this->m_queueH264=NULL;
-    this->m_semaH264Used=NULL;
-    this->m_semaH264Free=NULL;
+    this->m_rbYUV=NULL;
+    this->m_rbH264=NULL;
 }
-qint32 ZH264EncThread::ZBindYUVQueue(QQueue<QByteArray> *queueYUV,QSemaphore *semaYUVUsed,QSemaphore *semaYUVFree)
+qint32 ZH264EncThread::ZBindYUVQueue(ZRingBuffer *rbYUV)
 {
-    this->m_queueYUV=queueYUV;
-    this->m_semaYUVUsed=semaYUVUsed;
-    this->m_semaYUVFree=semaYUVFree;
+    this->m_rbYUV=rbYUV;
     return 0;
 }
-qint32 ZH264EncThread::ZBindH264Queue(QQueue<QByteArray> *queueH264,QSemaphore *semaH264Used,QSemaphore *semaH264Free)
+qint32 ZH264EncThread::ZBindH264Queue(ZRingBuffer *rbH264)
 {
-    this->m_queueH264=queueH264;
-    this->m_semaH264Used=semaH264Used;
-    this->m_semaH264Free=semaH264Free;
+    this->m_rbH264=rbH264;
     return 0;
 }
 qint32 ZH264EncThread::ZStartThread()
 {
     //check yuv queue.
-    if(this->m_queueYUV==NULL || this->m_semaYUVUsed==NULL || this->m_semaYUVFree==NULL)
+    if(this->m_rbYUV==NULL)
     {
         qDebug()<<"<error>:no bind yuv queue,cannot start.";
         return -1;
     }
     //check h264 queue.
-    if(this->m_queueH264==NULL || this->m_semaH264Used==NULL || this->m_semaH264Free==NULL)
+    if(this->m_rbH264==NULL)
     {
         qDebug()<<"<error>:no bind h264 queue,cannot start.";
         return -1;
@@ -194,6 +184,7 @@ void ZH264EncThread::run()
 //    {
 
 //    }
+    char *pYUV422Buffer=new char[1*1024*1024];
     char *yuv420pBuffer=new char[1*1024*1024];
     bool bIPBFlag=true;
     while(!gGblPara.m_bGblRst2Exit)
@@ -202,14 +193,14 @@ void ZH264EncThread::run()
         int nEncodeBytes=0;
 
         //1.fetch data from yuv queue.
-        QByteArray baImgData;
-        this->m_semaYUVUsed->acquire();//已用信号量减1.
-        baImgData=this->m_queueYUV->dequeue();
-        this->m_semaYUVFree->release();//空闲信号量加1.
-        //qDebug()<<"<h264 encode thread> fetch img from yuv queue,size:"<<baImgData.size();
-        if(baImgData.size()<=0)
+        qint32 nYUV422Len=0;
+        this->m_rbYUV->m_semaUsed->acquire();//已用信号量减1.
+        nYUV422Len=this->m_rbYUV->ZGetElement((qint8*)pYUV422Buffer,1*1024*1024);
+        this->m_rbYUV->m_semaFree->release();//空闲信号量加1.
+        if(nYUV422Len<=0)
         {
-            continue;
+            qDebug()<<"<error>:h264 enc thread get yuv data length is not right.";
+            break;
         }
 
         //2.do h264 encode.
@@ -217,7 +208,7 @@ void ZH264EncThread::run()
         //y=640*480
         //u=640*480*0.25
         //v=640*480*0.25
-        yuv422_to_yuv420(baImgData.data(),yuv420pBuffer,640,480);
+        yuv422_to_yuv420(pYUV422Buffer,yuv420pBuffer,640,480);
 
         char *y=(char*)pPicIn->img.plane[0];
         char *u=(char*)pPicIn->img.plane[1];
@@ -284,13 +275,12 @@ void ZH264EncThread::run()
             //3.put encode pkt to h264 queue.
             if(nEncodeBytes>0)
             {
-                QByteArray baEncodedData(pEncodeBuffer,nEncodeBytes);
-                this->m_semaH264Free->acquire();//空闲信号量减1.
-                this->m_queueH264->enqueue(baEncodedData);
-                this->m_semaH264Used->release();//已用信号量加1.
+                this->m_rbH264->m_semaFree->acquire();//空闲信号量减1.
+                this->m_rbH264->ZPutElement((qint8*)pEncodeBuffer,nEncodeBytes);
+                this->m_rbH264->m_semaUsed->release();//已用信号量加1.
             }
 
-            this->usleep(VIDEO_THREAD_SCHEDULE_US);
+            //this->usleep(VIDEO_THREAD_SCHEDULE_US);
         }
     }
     x264_picture_clean(pPicIn);

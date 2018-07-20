@@ -35,7 +35,7 @@ ZAudioParam::ZAudioParam()
     this->m_nPlayUnderrun=0;
 
     //同一时刻我们仅允许一个audio tcp客户端连接.
-    this->m_bTcpAudioConnected=false;
+    this->m_bAudioTcpConnected=false;
 }
 
 ZGblPara gGblPara;
@@ -61,7 +61,7 @@ ZGblPara::ZGblPara()
     //Tcp2Uart thread exit flag.
     this->m_bTcp2UartThreadExitFlag=false;
 
-    this->m_bTcpClientConnected=false;
+    this->m_bVideoTcpConnected=false;
     this->m_bTcp2UartConnected=false;
     this->m_nTcp2UartBytes=0;
     this->m_nUart2TcpBytes=0;
@@ -72,8 +72,8 @@ ZGblPara::ZGblPara()
     this->m_bCtlClientConnected=false;
 
     //json control flags.
-    this->m_bJsonImgPro=false;
-    this->m_bJsonFlushUI=false;
+    this->m_bJsonImgPro=true;
+    this->m_bJsonFlushUI=true;
 }
 ZGblPara::~ZGblPara()
 {

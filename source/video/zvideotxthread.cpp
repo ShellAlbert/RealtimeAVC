@@ -91,25 +91,21 @@ void rtpPrintf(unsigned char *buf, unsigned int len)
 #endif
 ZVideoTxThread::ZVideoTxThread()
 {
-    this->m_queue=NULL;
-    this->m_semaUsed=NULL;
-    this->m_semaFree=NULL;
+    this->m_rbH264=NULL;
     this->m_bExitFlag=false;
 }
-qint32 ZVideoTxThread::ZBindQueue(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZVideoTxThread::ZBindQueue(ZRingBuffer *rbH264)
 {
-    if(NULL==queue||NULL==semaUsed||NULL==semaFree)
-    {
-        qDebug()<<"<error>:invalid parameters,bind queue failed.";
-        return -1;
-    }
-    this->m_queue=queue;
-    this->m_semaUsed=semaUsed;
-    this->m_semaFree=semaFree;
+    this->m_rbH264=rbH264;
     return 0;
 }
 qint32 ZVideoTxThread::ZStartThread()
 {
+    if(NULL==this->m_rbH264)
+    {
+        qDebug()<<"<error>:no bind h264 queue,can not start.";
+        return -1;
+    }
     this->m_bExitFlag=false;
     this->start();
     return 0;
@@ -149,6 +145,7 @@ void ZVideoTxThread::run()
     RTPTime delay(0.040);
     RTPTime startTime=RTPTime::CurrentTime();
 #endif
+    char *txBuffer=new char[BUFSIZE_1MB];
     qDebug()<<"<MainLoop>:VideoTxThread starts.";
     while(!gGblPara.m_bGblRst2Exit)
     {
@@ -183,37 +180,44 @@ void ZVideoTxThread::run()
                 //客户端连接上后，就判断服务监听端，这样只允许一个tcp连接.
                 tcpServer->close();
                 //设置连接标志，这样编码器线程就会开始工作.
-                gGblPara.m_bTcpClientConnected=true;
+                gGblPara.m_bVideoTcpConnected=true;
                 qDebug()<<"connected.";
 
                 //向客户端发送音频数据包.
                 while(!gGblPara.m_bGblRst2Exit)
                 {
-                    //fetch data from tcp queue.
-                    QByteArray baH264Data;
-                    this->m_semaUsed->acquire();//已用信号量减1.
-                    baH264Data=this->m_queue->dequeue();
-                    this->m_semaFree->release();//空闲信号量加1.
+                    qint32 nH264Len=0;
+                    //fetch data from h264 queue.
+                    if(!this->m_rbH264->m_semaUsed->tryAcquire())//已用信号量减1.
+                    {
+                        this->usleep(VIDEO_THREAD_SCHEDULE_US);
+                        continue;
+                    }
+                    nH264Len=this->m_rbH264->ZGetElement((qint8*)txBuffer,BUFSIZE_1MB);
+                    this->m_rbH264->m_semaFree->release();//空闲信号量加1.
+                    if(nH264Len<=0)
+                    {
+                        qDebug()<<"<error>:error get h264 frames.";
+                        break;
+                    }
 
                     //Audio Packet format: pkt len + pkt data.
-                    QByteArray baH264PktLen=qint32ToQByteArray(baH264Data.size());
-//                    if(tcpSocket->write(baH264PktLen)<0)
-//                    {
-//                        qDebug()<<"<error>:socket write error,break it.";
-//                        break;
-//                    }
-                    baH264Data.prepend(baH264PktLen);
-                    if(tcpSocket->write(baH264Data)<0)
+                    QByteArray baH264PktLen=qint32ToQByteArray(nH264Len);
+                    if(tcpSocket->write(baH264PktLen)<0)
+                    {
+                        qDebug()<<"<error>:socket write error,break it.";
+                        break;
+                    }
+                    if(tcpSocket->write(txBuffer,nH264Len)<0)
                     {
                         qDebug()<<"<error>:socket write error,break it.";
                         break;
                     }
                     tcpSocket->waitForBytesWritten(1000);
                     //qDebug()<<"tx h264:"<<baH264Data.size();
-                    this->usleep(VIDEO_THREAD_SCHEDULE_US);
                 }
                 //设置连接标志，这样编码器线程就会停止工作.
-                gGblPara.m_bTcpClientConnected=false;
+                gGblPara.m_bVideoTcpConnected=false;
                 qDebug()<<"disconnected.";
             }
         }

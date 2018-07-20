@@ -10,6 +10,7 @@
 #include <alsa/asoundlib.h>
 #include <QSemaphore>
 #include <QQueue>
+#include <zringbuffer.h>
 
 #define RSIZE    64    //buf的大小
 
@@ -60,7 +61,7 @@ public:
     ZAudioCaptureThread(QString capDevName,bool bDump2WavFile);
     ~ZAudioCaptureThread();
 
-    qint32 ZStartThread(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
+    qint32 ZStartThread(ZRingBuffer *rbNoise);
     qint32 ZStopThread();
     bool ZIsRunning();
 protected:
@@ -90,10 +91,8 @@ private:
     qint64 m_nEscapeSec;
 private:
     bool m_bExitFlag;
-
-    QQueue<QByteArray> *m_queue;
-    QSemaphore *m_semaUsed;
-    QSemaphore *m_semaFree;
+private:
+    ZRingBuffer *m_rbNoise;
 };
 
 #endif // ZAUDIOCAPTURETHREAD_H

@@ -191,17 +191,11 @@ ZImgCapThread::ZImgCapThread(QString devNodeName,qint32 nPreWidth,qint32 nPreHei
     this->m_bMainCamera=bMainCamera;
 
     //capture image to local display queue.
-    this->m_queueDisp=NULL;
-    this->m_semaDispUsed=NULL;
-    this->m_semaDispFree=NULL;
+    this->m_rbDisp=NULL;
     //capture image to process queue.
-    this->m_queueProcess=NULL;
-    this->m_semaProcessUsed=NULL;
-    this->m_semaProcessFree=NULL;
+    this->m_rbProcess=NULL;
     //capture yuv to yuv queue.
-    this->m_queueYUV=NULL;
-    this->m_semaYUVUsed=NULL;
-    this->m_semaYUVFree=NULL;
+    this->m_rbYUV=NULL;
 
     this->m_bExitFlag=false;
 }
@@ -209,37 +203,31 @@ ZImgCapThread::~ZImgCapThread()
 {
 
 }
-qint32 ZImgCapThread::ZBindDispQueue(QQueue<QImage> *queueDisp,QSemaphore *semaDispUsed,QSemaphore *semaDispFree)
+qint32 ZImgCapThread::ZBindDispQueue(ZRingBuffer *rbDisp)
 {
-    this->m_queueDisp=queueDisp;
-    this->m_semaDispUsed=semaDispUsed;
-    this->m_semaDispFree=semaDispFree;
+    this->m_rbDisp=rbDisp;
     return 0;
 }
-qint32 ZImgCapThread::ZBindProcessQueue(QQueue<QImage> *queueProcess,QSemaphore *semaProcessUsed,QSemaphore *semaProcessFree)
+qint32 ZImgCapThread::ZBindProcessQueue(ZRingBuffer *rbProcess)
 {
-    this->m_queueProcess=queueProcess;
-    this->m_semaProcessUsed=semaProcessUsed;
-    this->m_semaProcessFree=semaProcessFree;
+    this->m_rbProcess=rbProcess;
     return 0;
 }
-qint32 ZImgCapThread::ZBindYUVQueue(QQueue<QByteArray> *queueYUV,QSemaphore *semaYUVUsed,QSemaphore *semaYUVFree)
+qint32 ZImgCapThread::ZBindYUVQueue(ZRingBuffer *rbYUV)
 {
-    this->m_queueYUV=queueYUV;
-    this->m_semaYUVUsed=semaYUVUsed;
-    this->m_semaYUVFree=semaYUVFree;
+    this->m_rbYUV=rbYUV;
     return 0;
 }
 qint32 ZImgCapThread::ZStartThread()
 {
     //check disp queue.
-    if(this->m_queueDisp==NULL || this->m_semaDispUsed==NULL || this->m_semaDispFree==NULL)
+    if(this->m_rbDisp==NULL)
     {
         qDebug()<<"<error>:no bind display queue,cannot start thread.";
         return -1;
     }
     //check process queue.
-    if(this->m_queueProcess==NULL || this->m_semaProcessUsed==NULL || this->m_semaProcessFree==NULL)
+    if(this->m_rbProcess==NULL)
     {
         qDebug()<<"<error>:no bind process queue,cannot start thread.";
         return -1;
@@ -247,7 +235,7 @@ qint32 ZImgCapThread::ZStartThread()
     //check the yuv queue if i am the main camera.
     if(this->m_bMainCamera)
     {
-        if(this->m_queueYUV==NULL || this->m_semaYUVUsed==NULL || this->m_semaYUVFree==NULL)
+        if(this->m_rbYUV==NULL)
         {
             qDebug()<<"<error>:no bind yuv queue,cannot start thread.";
             return -1;
@@ -342,25 +330,24 @@ void ZImgCapThread::run()
             break;
         }
 
-#if 1
         //if I am the main camera,put yuv data to yuv queue.
         //只有当有客户端连接时,才将yuv数据扔入yuv队列中,促使编码线程工作.
-        if(this->m_bMainCamera && gGblPara.m_bTcpClientConnected)
+        if(this->m_bMainCamera && gGblPara.m_bVideoTcpConnected)
         {
-            if(this->m_semaYUVFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
+            if(this->m_rbYUV->m_semaFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
             {
-                QByteArray baYUVData((const char*)pYUVData,nLen);
-                this->m_queueYUV->enqueue(baYUVData);
-                this->m_semaYUVUsed->release();//已用信号量加1.
+                this->m_rbYUV->ZPutElement((qint8*)pYUVData,nLen);
+                this->m_rbYUV->m_semaUsed->release();//已用信号量加1.
             }else{
                 qDebug()<<"<Warning>:YUV queue is full,trash new captured image.";
+                this->usleep(VIDEO_THREAD_SCHEDULE_US);
             }
         }
-#endif
+
         //convert yuv to RGB.
         YUYVToRGB_table(pYUVData,pRGBBuffer,camDev->ZGetImgWidth(),camDev->ZGetImgHeight());
         //build a RGB888 QImage object.
-        QImage newQImg((uchar*)pRGBBuffer,camDev->ZGetImgWidth(),camDev->ZGetImgHeight(),QImage::Format_RGB888);
+        //QImage newQImg((uchar*)pRGBBuffer,camDev->ZGetImgWidth(),camDev->ZGetImgHeight(),QImage::Format_RGB888);
         //free a buffer for device.
         camDev->ZUnGetFrame();
 
@@ -374,28 +361,31 @@ void ZImgCapThread::run()
         //采集线程才将图像扔入process队列，从而唤醒图像处理线程工作.
         if(gGblPara.m_bJsonImgPro)
         {
-            if(this->m_semaProcessFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
+            if(this->m_rbProcess->m_semaFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
             {
-                this->m_queueProcess->enqueue(newQImg);
-                this->m_semaProcessUsed->release();//已用信号量加1.
+                //因为图像是RGB888的，所以总字节数=width*height*3.
+                this->m_rbProcess->ZPutElement((qint8*)pRGBBuffer,camDev->ZGetImgWidth()*camDev->ZGetImgHeight()*3);
+                this->m_rbProcess->m_semaUsed->release();//已用信号量加1.
             }else{
                 qDebug()<<"<Warning>:ImgProcess queue is full,trash new captured image.";
+                this->usleep(VIDEO_THREAD_SCHEDULE_US);
             }
         }
-#if 1
+
         //只有开启本地UI刷新才将采集到的图像扔入disp队列.
         if(gGblPara.m_bJsonFlushUI)
         {
-            if(this->m_semaDispFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
+            if(this->m_rbDisp->m_semaFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
             {
-                this->m_queueDisp->enqueue(newQImg);
-                this->m_semaDispUsed->release();//已用信号量加1.
+                //因为图像是RGB888的，所以总字节数=width*height*3.
+                this->m_rbDisp->ZPutElement((qint8*)pRGBBuffer,camDev->ZGetImgWidth()*camDev->ZGetImgHeight()*3);
+                this->m_rbDisp->m_semaUsed->release();//已用信号量加1.
+                emit this->ZSigNewImgArrived();
             }else{
                 qDebug()<<"<Warning>:LocalDisp queue is full,trash new captured image.";
+                this->usleep(VIDEO_THREAD_SCHEDULE_US);
             }
         }
-#endif
-        this->usleep(VIDEO_THREAD_SCHEDULE_US);
     }
     //do some clean. stop camera.
     camDev->ZStopCapture();

@@ -10,36 +10,43 @@ ZAudioTask::ZAudioTask(QObject *parent):QObject(parent)
 
     //noise queue.
     //capture thread -> noise cut thread.
-    this->m_queueNoise=NULL;
-    this->m_semaUsedNoise=NULL;
-    this->m_semaFreeNoise=NULL;
+//    this->m_queueNoise=NULL;
+//    this->m_semaUsedNoise=NULL;
+//    this->m_semaFreeNoise=NULL;
+    this->m_rbNoise=NULL;
 
     //clear queue.
     //noise cut thread -> play thread.
-    this->m_queueClear=NULL;
-    this->m_semaUsedClear=NULL;
-    this->m_semaFreeClear=NULL;
+//    this->m_queueClear=NULL;
+//    this->m_semaUsedClear=NULL;
+//    this->m_semaFreeClear=NULL;
+    this->m_rbClear=NULL;
 
     //encode queue.
     //noise cut thread -> encode thread.
-    this->m_queueEncode=NULL;
-    this->m_semaUsedEncode=NULL;
-    this->m_semaFreeEncode=NULL;
+//    this->m_queueEncode=NULL;
+//    this->m_semaUsedEncode=NULL;
+//    this->m_semaFreeEncode=NULL;
+    this->m_rbEncode=NULL;
 
-    this->m_queueTCP=NULL;
-    this->m_semaUsedTCP=NULL;
-    this->m_semaFreeTCP=NULL;
+//    this->m_queueTCP=NULL;
+//    this->m_semaUsedTCP=NULL;
+//    this->m_semaFreeTCP=NULL;
+    this->m_rbTx=NULL;
 
     //capture-process-playback mode.
     this->m_capThread=NULL;
     this->m_cutThread=NULL;
     this->m_playThread=NULL;
     this->m_pcmEncThread=NULL;
-    this->m_tcpThread=NULL;
+    this->m_txThread=NULL;
 }
 
 ZAudioTask::~ZAudioTask()
 {
+    this->m_timer->stop();
+    delete this->m_timer;
+
     //capture-process-playback mode.
     if(this->m_capThread!=NULL)
     {
@@ -57,7 +64,12 @@ ZAudioTask::~ZAudioTask()
     {
         delete this->m_pcmEncThread;
     }
+    if(this->m_txThread!=NULL)
+    {
+        delete this->m_txThread;
+    }
 
+#if 0
     //noise queue.
     if(this->m_queueNoise!=NULL)
     {
@@ -100,19 +112,30 @@ ZAudioTask::~ZAudioTask()
     {
         delete this->m_semaFreeEncode;
     }
+#endif
 }
-qint32 ZAudioTask::ZBindWaveFormQueueBefore(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+//qint32 ZAudioTask::ZBindWaveFormQueueBefore(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+//{
+//    this->m_queueWavBefore=queue;
+//    this->m_semaUsedWavBefore=semaUsed;
+//    this->m_semaFreeWavBefore=semaFree;
+//    return 0;
+//}
+//qint32 ZAudioTask::ZBindWaveFormQueueAfter(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+//{
+//    this->m_queueWavAfter=queue;
+//    this->m_semaUsedWavAfter=semaUsed;
+//    this->m_semaFreeWavAfter=semaFree;
+//    return 0;
+//}
+qint32 ZAudioTask::ZBindWaveFormQueueBefore(ZRingBuffer *rbWave)
 {
-    this->m_queueWavBefore=queue;
-    this->m_semaUsedWavBefore=semaUsed;
-    this->m_semaFreeWavBefore=semaFree;
+    this->m_rbWaveBefore=rbWave;
     return 0;
 }
-qint32 ZAudioTask::ZBindWaveFormQueueAfter(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZAudioTask::ZBindWaveFormQueueAfter(ZRingBuffer *rbWave)
 {
-    this->m_queueWavAfter=queue;
-    this->m_semaUsedWavAfter=semaUsed;
-    this->m_semaFreeWavAfter=semaFree;
+    this->m_rbWaveAfter=rbWave;
     return 0;
 }
 qint32 ZAudioTask::ZStartTask()
@@ -123,26 +146,29 @@ qint32 ZAudioTask::ZStartTask()
 
     //noise queue.
     //capture thread -> noise cut thread.
-    this->m_queueNoise=new QQueue<QByteArray>;
-    this->m_semaUsedNoise=new QSemaphore(0);
-    this->m_semaFreeNoise=new QSemaphore(30);
+//    this->m_queueNoise=new QQueue<QByteArray>;
+//    this->m_semaUsedNoise=new QSemaphore(0);
+//    this->m_semaFreeNoise=new QSemaphore(30);
+    this->m_rbNoise=new ZRingBuffer(30,BLOCK_SIZE);
 
     //clear queue.
     //noise cut thread -> play thread.
-    this->m_queueClear=new QQueue<QByteArray>;
-    this->m_semaUsedClear=new QSemaphore(0);
-    this->m_semaFreeClear=new QSemaphore(30);
+//    this->m_queueClear=new QQueue<QByteArray>;
+//    this->m_semaUsedClear=new QSemaphore(0);
+//    this->m_semaFreeClear=new QSemaphore(30);
+    this->m_rbClear=new ZRingBuffer(30,BLOCK_SIZE);
 
     //encode queue.
     //noise cut thread -> encode thread.
-    this->m_queueEncode=new QQueue<QByteArray>;
-    this->m_semaUsedEncode=new QSemaphore(0);
-    this->m_semaFreeEncode=new QSemaphore(30);
+//    this->m_queueEncode=new QQueue<QByteArray>;
+//    this->m_semaUsedEncode=new QSemaphore(0);
+//    this->m_semaFreeEncode=new QSemaphore(30);
+    this->m_rbEncode=new ZRingBuffer(30,BLOCK_SIZE);
 
-    this->m_queueTCP=new QQueue<QByteArray>;
-    this->m_semaUsedTCP=new QSemaphore(0);
-    this->m_semaFreeTCP=new QSemaphore(30);
-
+//    this->m_queueTCP=new QQueue<QByteArray>;
+//    this->m_semaUsedTCP=new QSemaphore(0);
+//    this->m_semaFreeTCP=new QSemaphore(30);
+    this->m_rbTx=new ZRingBuffer(30,BLOCK_SIZE);
 
     //CaptureThread -> queueNoise -> NoiseCutThread  -> queueEncode -> PcmEncThread -> queueTCP -> TcpDumpThread.
     //                                               -> queueClear  -> PlaybackThread.
@@ -154,8 +180,8 @@ qint32 ZAudioTask::ZStartTask()
 
     //create noise cut thread.
     this->m_cutThread=new ZNoiseCutThread;
-    this->m_cutThread->ZBindWaveFormQueueBefore(this->m_queueWavBefore,this->m_semaUsedWavBefore,this->m_semaFreeWavBefore);
-    this->m_cutThread->ZBindWaveFormQueueAfter(this->m_queueWavAfter,this->m_semaUsedWavAfter,this->m_semaFreeWavAfter);
+    this->m_cutThread->ZBindWaveFormQueueBefore(this->m_rbWaveBefore);
+    this->m_cutThread->ZBindWaveFormQueueAfter(this->m_rbWaveAfter);
     QObject::connect(this->m_cutThread,SIGNAL(ZSigThreadFinished()),this,SLOT(ZSlotCheckExitFlag()));
 
     //create playback thread.
@@ -167,22 +193,22 @@ qint32 ZAudioTask::ZStartTask()
     connect(this->m_pcmEncThread,SIGNAL(ZSigThreadFinished()),this,SLOT(ZSlotCheckExitFlag()));
 
     //tcp dump thread.
-    this->m_tcpThread=new ZTcpDumpThread;
-    QObject::connect(this->m_tcpThread,SIGNAL(ZSigThreadFinished()),this,SLOT(ZSlotCheckExitFlag()));
+    this->m_txThread=new ZAudioTxThread;
+    QObject::connect(this->m_txThread,SIGNAL(ZSigThreadFinished()),this,SLOT(ZSlotCheckExitFlag()));
 
     //start thread.
-    this->m_capThread->ZStartThread(this->m_queueNoise,this->m_semaUsedNoise,this->m_semaFreeNoise);
-    this->m_cutThread->ZStartThread(this->m_queueNoise,this->m_semaUsedNoise,this->m_semaFreeNoise,///<
-                                    this->m_queueClear,this->m_semaUsedClear,this->m_semaFreeClear,///<
-                                    this->m_queueEncode,this->m_semaUsedEncode,this->m_semaFreeEncode);
-
-    this->m_playThread->ZStartThread(this->m_queueClear,this->m_semaUsedClear,this->m_semaFreeClear);
+    this->m_capThread->ZStartThread(this->m_rbNoise);
+    this->m_cutThread->ZStartThread(this->m_rbNoise,this->m_rbClear,this->m_rbEncode);
+    this->m_playThread->ZStartThread(this->m_rbClear);
     //////////////////////////////////////////////////////////////////////////////////////////////////
-    this->m_pcmEncThread->ZStartThread(this->m_queueEncode,this->m_semaUsedEncode,this->m_semaFreeEncode,///<
-                                       this->m_queueTCP,this->m_semaUsedTCP,this->m_semaFreeTCP);
+    this->m_pcmEncThread->ZStartThread(this->m_rbEncode,this->m_rbTx);
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
-    this->m_tcpThread->ZStartThread(this->m_queueTCP,this->m_semaUsedTCP,this->m_semaFreeTCP);
+    this->m_txThread->ZStartThread(this->m_rbTx);
     return 0;
+}
+ZNoiseCutThread* ZAudioTask::ZGetNoiseCutThread()
+{
+    return this->m_cutThread;
 }
 void ZAudioTask::ZSlotCheckExitFlag()
 {
@@ -203,10 +229,8 @@ void ZAudioTask::ZSlotCheckExitFlag()
         this->m_pcmEncThread->quit();
         this->m_pcmEncThread->wait(1000);
 
-        this->m_tcpThread->quit();
-        this->m_tcpThread->wait(1000);
-
-        qApp->exit(0);
+        this->m_txThread->quit();
+        this->m_txThread->wait(1000);
     }
 }
 void ZAudioTask::ZSlotTimeout()
@@ -215,7 +239,8 @@ void ZAudioTask::ZSlotTimeout()
     {
         this->m_nCapOverrun=gGblPara.m_audio.m_nCapOverrun;
         this->m_nPlayUnderrun=gGblPara.m_audio.m_nPlayUnderrun;
-        qDebug("<Warning>: Capture Overrun:%d(queue:%d),Playback Underrun:%d(queue:%d).",this->m_nCapOverrun,this->m_queueNoise->size(),///<
-               this->m_nPlayUnderrun,this->m_queueClear->size());
+        qDebug("<Warning>: Capture Overrun:%d(queue:%d),Playback Underrun:%d(queue:%d).",///<
+               this->m_nCapOverrun,this->m_rbNoise->ZGetValidNum(),///<
+               this->m_nPlayUnderrun,this->m_rbClear->ZGetValidNum());
     }
 }

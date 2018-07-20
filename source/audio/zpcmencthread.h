@@ -5,7 +5,7 @@
 #include <QQueue>
 #include <QSemaphore>
 #include "../zgblpara.h"
-
+#include <zringbuffer.h>
 
 class ZPCMEncThread : public QThread
 {
@@ -13,8 +13,7 @@ class ZPCMEncThread : public QThread
 public:
     ZPCMEncThread();
 
-    qint32 ZStartThread(QQueue<QByteArray> *queueEnc,QSemaphore *semaUsedEnc,QSemaphore *semaFreeEnc,///<
-                        QQueue<QByteArray> *queueTCP,QSemaphore *semaUsedTCP,QSemaphore *semaFreeTCP);
+    qint32 ZStartThread(ZRingBuffer *rbEncode,ZRingBuffer *rbTx);
     qint32 ZStopThread();
     bool ZIsRunning();
 protected:
@@ -22,12 +21,8 @@ protected:
 signals:
     void ZSigThreadFinished();
 private:
-    QQueue<QByteArray> *m_queueEnc;
-    QSemaphore *m_semaUsedEnc;
-    QSemaphore *m_semaFreeEnc;
-    QQueue<QByteArray> *m_queueTCP;
-    QSemaphore *m_semaUsedTCP;
-    QSemaphore *m_semaFreeTCP;
+    ZRingBuffer *m_rbEncode;
+    ZRingBuffer *m_rbTx;
     bool m_bRunning;
 };
 

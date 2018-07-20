@@ -59,11 +59,9 @@ qint32 ZAudioCaptureThread::ZUpdateWavHead2File()
     lseek(this->m_fd,40,SEEK_SET);
     write(this->m_fd,&nPCMDataLen,sizeof(nPCMDataLen));
 }
-qint32 ZAudioCaptureThread::ZStartThread(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZAudioCaptureThread::ZStartThread(ZRingBuffer *rbNoise)
 {
-    this->m_queue=queue;
-    this->m_semaUsed=semaUsed;
-    this->m_semaFree=semaFree;
+    this->m_rbNoise=rbNoise;
 
     this->m_bExitFlag=false;
     this->m_nTotalBytes=0;
@@ -246,12 +244,6 @@ void ZAudioCaptureThread::run()
             return;
         }
 
-#if 0
-        QFile filePCM("original.pcm");
-        filePCM.open(QIODevice::WriteOnly);
-        qint32 nCapFrms=0;
-#endif
-
         //allocate buffer to store input pcm data.
         inputBuffer=new char[pcmBlkSize];
         //the main-loop.
@@ -265,22 +257,15 @@ void ZAudioCaptureThread::run()
                 //qDebug( "<cap>:Buffer Overrun");
                 gGblPara.m_audio.m_nCapOverrun++;
             }
-            //fill data to queue.
-            QByteArray newPCMData(inputBuffer,pcmBlkSize);
-            this->m_semaFree->acquire();//空闲信号量减1.
-            this->m_queue->enqueue(newPCMData);
-            this->m_semaUsed->release();//已用信号量加1.
-#if 0
-            filePCM.write(newPCMData);
-            nCapFrms++;
-            if(nCapFrms>1000)
+            //put original pcm data into noise queue.
+            if(this->m_rbNoise->m_semaFree->tryAcquire())//空闲信号量减1.
             {
-                filePCM.close();
-                qDebug()<<"capture 1000 frames,quit.";
-                break;
+                this->m_rbNoise->ZPutElement((qint8*)inputBuffer,pcmBlkSize);
+                this->m_rbNoise->m_semaUsed->release();//已用信号量加1.
+            }else{
+                qDebug()<<"<Warning>:audio capture queue is full,trash new captured PCM.";
+                this->usleep(AUDIO_THREAD_SCHEDULE_US);
             }
-#endif
-            this->usleep(AUDIO_THREAD_SCHEDULE_US);
         }
     }while(0);
 

@@ -41,48 +41,28 @@ ZNoiseCutThread::ZNoiseCutThread()
 {
 
 }
-qint32 ZNoiseCutThread::ZBindWaveFormQueueBefore(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZNoiseCutThread::ZBindWaveFormQueueBefore(ZRingBuffer *rbWave)
 {
-    this->m_queueWavBefore=queue;
-    this->m_semaUsedWavBefore=semaUsed;
-    this->m_semaFreeWavBefore=semaFree;
+    this->m_rbWaveBefore=rbWave;
     return 0;
 }
-qint32 ZNoiseCutThread::ZBindWaveFormQueueAfter(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZNoiseCutThread::ZBindWaveFormQueueAfter(ZRingBuffer *rbWave)
 {
-    this->m_queueWavAfter=queue;
-    this->m_semaUsedWavAfter=semaUsed;
-    this->m_semaFreeWavAfter=semaFree;
+    this->m_rbWaveAfter=rbWave;
     return 0;
 }
-qint32 ZNoiseCutThread::ZStartThread(QQueue<QByteArray> *queueNoise,QSemaphore *semaUsedNoise,QSemaphore *semaFreeNoise,///<
-                                     QQueue<QByteArray> *queueClear,QSemaphore *semaUsedClear,QSemaphore *semaFreeClear,///<
-                                     QQueue<QByteArray> *queueEncode,QSemaphore *semaUsedEncode,QSemaphore *semaFreeEncode)
+qint32 ZNoiseCutThread::ZStartThread(ZRingBuffer *rbNoise,ZRingBuffer *rbClear,ZRingBuffer *rbEncode)
 {
-    this->m_queueNoise=queueNoise;
-    this->m_semaUsedNoise=semaUsedNoise;
-    this->m_semaFreeNoise=semaFreeNoise;
-
-    ///////////////////////////////////
-    this->m_queueClear=queueClear;
-    this->m_semaUsedClear=semaUsedClear;
-    this->m_semaFreeClear=semaFreeClear;
-
-    /////////////////////////
-    this->m_queueEncode=queueEncode;
-    this->m_semaUsedEncode=semaUsedEncode;
-    this->m_semaFreeEncode=semaFreeEncode;
-
-    //////////////////////
+    this->m_rbNoise=rbNoise;
+    this->m_rbClear=rbClear;
+    this->m_rbEncode=rbEncode;
     this->start();
-
     return 0;
 }
 qint32 ZNoiseCutThread::ZStopThread()
 {
     return 0;
 }
-
 void ZNoiseCutThread::run()
 {
 
@@ -99,17 +79,17 @@ void ZNoiseCutThread::run()
     }
     //WebRTC.
     NsHandle *pNS_inst=NULL;
-    if (0 != WebRtcNs_Create(&pNS_inst))
+    if(0!=WebRtcNs_Create(&pNS_inst))
     {
         printf("Noise_Suppression WebRtcNs_Create err! \n");
         return;
     }
-    if (0 !=  WebRtcNs_Init(pNS_inst,32000))
+    if(0!=WebRtcNs_Init(pNS_inst,32000))
     {
         printf("Noise_Suppression WebRtcNs_Init err! \n");
         return;
     }
-    if (0 !=  WebRtcNs_set_policy(pNS_inst,1))
+    if(0!=WebRtcNs_set_policy(pNS_inst,1))
     {
         printf("Noise_Suppression WebRtcNs_set_policy err! \n");
         return;
@@ -163,65 +143,33 @@ void ZNoiseCutThread::run()
 
     char *pRNNoiseBuffer=new char[FRAME_SIZE];
     qint32 nRNNoiseBufLen=0;
-#if 0
-    QFile fileRNNoise("rnnoise.pcm");
-    fileRNNoise.open(QIODevice::WriteOnly);
-    qint32 nFrame=0;
-#endif
+    //脏音频数据（未经过降噪处理的原始采样数据）.
+    QByteArray *baPCMData=new QByteArray(BLOCK_SIZE,0);
+    qint32 nPCMDataLen=0;
     while(!gGblPara.m_bGblRst2Exit)
     {
-        QByteArray baPCMData;
-        //fetch data from noise queue.
-        this->m_semaUsedNoise->acquire();//已用信号量减1
-        baPCMData=this->m_queueNoise->dequeue();
-        this->m_semaFreeNoise->release();//空闲信号量加1
+        //fetch noise pcm data from noise queue.
+        if(!this->m_rbNoise->m_semaUsed->tryAcquire())
+        {
+            this->usleep(AUDIO_THREAD_SCHEDULE_US);
+            continue;
+        }
+        nPCMDataLen=this->m_rbNoise->ZGetElement((qint8*)baPCMData->data(),baPCMData->size());
+        this->m_rbNoise->m_semaFree->release();
 
         //只有开启本地UI刷新才将采集到的声音数据扔入wavBefore队列.
         //将未处理过的数据投入before队列，用于本地波形显示.
         if(gGblPara.m_bJsonFlushUI)
         {
-            if(this->m_semaFreeWavBefore->tryAcquire())
+            if(this->m_rbWaveBefore->m_semaFree->tryAcquire())
             {
-                this->m_queueWavBefore->enqueue(baPCMData);
-                this->m_semaUsedWavBefore->release();
+                this->m_rbWaveBefore->ZPutElement((qint8*)baPCMData->data(),nPCMDataLen);
+                this->m_rbWaveBefore->m_semaUsed->release();
+                emit this->ZSigNewWaveBeforeArrived();
             }else{
                 qDebug()<<"<Warning>:audio wavBefore queue is full,trash new captured pcm.";
             }
         }
-#if 0
-        //Automatic gain control from WebRTC for all algorithms.
-        if(gGblParam.m_nGaindB>0)
-        {
-            int micLevelIn=0;
-            int micLevelOut=0;
-
-            char *pcmData=(char*)baPCMData.data();
-            int nProcessedBytes=0;
-            int nRemaingBytes=baPCMData.size();
-            while(nRemaingBytes>=len)
-            {
-                //prepare data.
-                memcpy(pDataIn,pcmData+nProcessedBytes,len);
-
-                int inMicLevel=micLevelOut;
-                int outMicLevel=0;
-                uint8_t saturationWarning;
-                int nAgcRet = WebRtcAgc_Process(agcHandle,pDataIn,NULL,frameSize,pDataOut,NULL,inMicLevel,&outMicLevel,0,&saturationWarning);
-                if(nAgcRet!=0)
-                {
-                    qDebug()<<"<error>:error at WebRtcAgc_Process().";
-                    break;
-                }
-                micLevelIn=outMicLevel;
-                //copy data out.
-                memcpy(pcmData+nProcessedBytes,pDataOut,len);
-
-                //update the processed and remaing bytes.
-                nProcessedBytes+=len;
-                nRemaingBytes-=len;
-            }
-        }
-#endif
 
         //de-noise processing.
         if(0==gGblPara.m_audio.m_nDeNoiseMethod)
@@ -238,9 +186,9 @@ void ZNoiseCutThread::run()
             float fPcmData[frame_size];
 
             //two channels pcm data.
-            int16_t *sPcmData=(int16_t*)baPCMData.data();
-            //QByteArray::size()返回的是字节数，但此处我们要以int16_t作为基本单位，所以要除以sizeof(int16_t).
-            uint32_t nPcmDataInt16Len=baPCMData.size()/sizeof(int16_t);
+            int16_t *sPcmData=(int16_t*)baPCMData->data();
+            //nNoisePCMLen返回的是字节数，但此处我们要以int16_t作为基本单位，所以要除以sizeof(int16_t).
+            uint32_t nPcmDataInt16Len=nPCMDataLen/sizeof(int16_t);
             //计算需要循环处理多少次，以及还余多少字节.
             qint32 frames=nPcmDataInt16Len/frame_size;
             qint32 remainBytes=nPcmDataInt16Len%frame_size;
@@ -259,21 +207,11 @@ void ZNoiseCutThread::run()
                 }
                 sPcmData+=frame_size;
             }
-
-#if 0
-            fileRNNoise.write(baPCMData);
-            nFrame++;
-            if(nFrame>=1000)
-            {
-                fileRNNoise.close();
-                qDebug()<<"rnnoise.pcm okay.";
-            }
-#endif
         }else if(2==gGblPara.m_audio.m_nDeNoiseMethod)
         {
             //qDebug()<<"DeNoise:WebRTC Enabled";
             int i;
-            char *pcmData=(char*)baPCMData.data();
+            char *pcmData=(char*)baPCMData->data();
             int  filter_state1[6],filter_state12[6];
             int  Synthesis_state1[6],Synthesis_state12[6];
 
@@ -282,9 +220,9 @@ void ZNoiseCutThread::run()
             memset(Synthesis_state1,0,sizeof(Synthesis_state1));
             memset(Synthesis_state12,0,sizeof(Synthesis_state12));
 
-            for(i=0;i<baPCMData.size();i+=640)
+            for(i=0;i<nPCMDataLen;i+=640)
             {
-                if(baPCMData.size()-i>= 640)
+                if(nPCMDataLen-i>= 640)
                 {
                     short shBufferIn[320] = {0};
                     short shInL[160],shInH[160];
@@ -308,8 +246,8 @@ void ZNoiseCutThread::run()
         {
             //qDebug()<<"DeNoise:Bevis Enabled";
             //新的数据帧的地址及大小.
-            char *pPcmData=baPCMData.data();
-            qint32 nPcmBytes=baPCMData.size();
+            char *pPcmData=baPCMData->data();
+            qint32 nPcmBytes=nPCMDataLen;
             //如果上一帧有遗留的尾巴数据，则从新帧中复制出部分数据与之前遗留数据拼帧处理.
             if(nBevisRemaingBytes>0 && nBevisRemaingBytes<FRAME_LEN)
             {
@@ -327,10 +265,10 @@ void ZNoiseCutThread::run()
                 char pDst[FRAME_LEN];
                 bevis.vp_process(pSrc,(int16_t*)pDst,2,FRAME_LEN);
 
-                QByteArray baPCM(pDst,FRAME_LEN);
-                this->m_semaFreeClear->acquire();//空闲信号量减1.
-                this->m_queueClear->enqueue(baPCM);
-                this->m_semaUsedClear->release();//已用信号量加1.
+//                QByteArray baPCM(pDst,FRAME_LEN);
+//                this->m_semaFreeClear->acquire();//空闲信号量减1.
+//                this->m_queueClear->enqueue(baPCM);
+//                this->m_semaUsedClear->release();//已用信号量加1.
 
                 //reset.
                 nBevisRemaingBytes=0;
@@ -348,10 +286,10 @@ void ZNoiseCutThread::run()
                 char pDst[FRAME_LEN];
                 bevis.vp_process((int16_t*)pSrc,(int16_t*)pDst,2,FRAME_LEN);
 
-                QByteArray baPCM(pDst,FRAME_LEN);
-                this->m_semaFreeClear->acquire();//空闲信号量减1.
-                this->m_queueClear->enqueue(baPCM);
-                this->m_semaUsedClear->release();//已用信号量加1.
+//                QByteArray baPCM(pDst,FRAME_LEN);
+//                this->m_semaFreeClear->acquire();//空闲信号量减1.
+//                this->m_queueClear->enqueue(baPCM);
+//                this->m_semaUsedClear->release();//已用信号量加1.
             }
             if(nRemaingBytes>0)
             {
@@ -369,9 +307,9 @@ void ZNoiseCutThread::run()
             int micLevelIn=0;
             int micLevelOut=0;
 
-            char *pcmData=(char*)baPCMData.data();
+            char *pcmData=(char*)baPCMData->data();
             int nProcessedBytes=0;
-            int nRemaingBytes=baPCMData.size();
+            int nRemaingBytes=nPCMDataLen;
             while(nRemaingBytes>=len)
             {
                 //prepare data.
@@ -396,44 +334,41 @@ void ZNoiseCutThread::run()
             }
         }
 #endif
-#if 1
-        //put data to clear queue.
-        if(this->m_semaFreeClear->tryAcquire())//空闲信号量减1,这里使用try防止阻塞.
+
+        //put denoise data to clear queue for local playback.
+        if(this->m_rbClear->m_semaFree->tryAcquire())//空闲信号量减1,这里使用try防止阻塞.
         {
-            this->m_queueClear->enqueue(baPCMData);
-            this->m_semaUsedClear->release();//已用信号量加1.
+            this->m_rbClear->ZPutElement((qint8*)baPCMData->data(),nPCMDataLen);
+            this->m_rbClear->m_semaUsed->release();//已用信号量加1.
         }else{
             qDebug()<<"<Warning>:audio clear queue is full,trash new captured pcm.";
         }
-#endif
-#if 1
-        //put data into encode queue.
+
+        //put denoise data into encode queue for tcp transfer.
         //当有客户端连接上时，才将采集到的数据放到编码队列，否则并不投入数据.
-        if(gGblPara.m_bTcpClientConnected)
+        if(gGblPara.m_audio.m_bAudioTcpConnected)
         {
-            if(this->m_semaFreeEncode->tryAcquire())//空闲信号量减1,这里使用try防止阻塞.
+            if(this->m_rbEncode->m_semaFree->tryAcquire())//空闲信号量减1,这里使用try防止阻塞.
             {
-                this->m_queueEncode->enqueue(baPCMData);
-                this->m_semaUsedEncode->release();//已用信号量加1.
+                this->m_rbEncode->ZPutElement((qint8*)baPCMData->data(),nPCMDataLen);
+                this->m_rbEncode->m_semaUsed->release();//已用信号量加1.
             }else{
                 qDebug()<<"<Warning>:audio encode queue is full,trash new captured pcm.";
             }
         }
-#endif
-#if 1
+
         //将未处理过的数据投入after队列，用于本地波形显示.
         if(gGblPara.m_bJsonFlushUI)
         {
-            if(this->m_semaFreeWavAfter->tryAcquire())
+            if(this->m_rbWaveAfter->m_semaFree->tryAcquire())
             {
-                this->m_queueWavAfter->enqueue(baPCMData);
-                this->m_semaUsedWavAfter->release();
+                this->m_rbWaveAfter->ZPutElement((qint8*)baPCMData->data(),nPCMDataLen);
+                this->m_rbWaveAfter->m_semaUsed->release();
+                emit this->ZSigNewWaveAfterArrived();
             }else{
                 qDebug()<<"<Warning>:audio wavAfter queue is full,trash new captured pcm.";
             }
         }
-#endif
-        this->usleep(AUDIO_THREAD_SCHEDULE_US);
     }
     rnnoise_destroy(st);
     WebRtcNs_Free(pNS_inst);

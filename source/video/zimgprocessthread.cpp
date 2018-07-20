@@ -12,13 +12,8 @@ ZImgProcessThread::ZImgProcessThread()
     this->m_timerProcess=NULL;
     this->m_bRunning=false;
 
-    this->m_queueMain=NULL;
-    this->m_semaMainUsed=NULL;
-    this->m_semaMainFree=NULL;
-
-    this->m_queueAux=NULL;
-    this->m_semaAuxUsed=NULL;
-    this->m_semaAuxFree=NULL;
+    this->m_rbMain=NULL;
+    this->m_rbAux=NULL;
 
     this->m_queueProcessedSet=NULL;
     this->m_semaProcessedSetUsed=NULL;
@@ -28,18 +23,14 @@ ZImgProcessThread::~ZImgProcessThread()
 {
 
 }
-qint32 ZImgProcessThread::ZBindMainQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZImgProcessThread::ZBindMainQueue(ZRingBuffer *rbMain)
 {
-    this->m_queueMain=queue;
-    this->m_semaMainUsed=semaUsed;
-    this->m_semaMainFree=semaFree;
+    this->m_rbMain=rbMain;
     return 0;
 }
-qint32 ZImgProcessThread::ZBindAuxQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZImgProcessThread::ZBindAuxQueue(ZRingBuffer *rbAux)
 {
-    this->m_queueAux=queue;
-    this->m_semaAuxUsed=semaUsed;
-    this->m_semaAuxFree=semaFree;
+    this->m_rbAux=rbAux;
     return 0;
 }
 qint32 ZImgProcessThread::ZBindProcessedSetQueue(QQueue<ZImgProcessedSet> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
@@ -51,17 +42,10 @@ qint32 ZImgProcessThread::ZBindProcessedSetQueue(QQueue<ZImgProcessedSet> *queue
 }
 qint32 ZImgProcessThread::ZStartThread()
 {
-    //check main queue.
-    if(this->m_queueMain==NULL || this->m_semaMainUsed==NULL || this->m_semaMainFree==NULL)
+    //check main queue and aux queue.
+    if(this->m_rbMain==NULL || this->m_rbAux==NULL)
     {
-        qDebug()<<"<error>:no bind main queue,cannot start.";
-        return -1;
-    }
-
-    //check aux queue.
-    if(this->m_queueAux==NULL || this->m_semaAuxUsed==NULL || this->m_semaAuxFree==NULL)
-    {
-        qDebug()<<"<error>:no bind aux main,cannot start.";
+        qDebug()<<"<error>:no bind main/aux queue,cannot start.";
         return -1;
     }
 
@@ -121,20 +105,23 @@ void ZImgProcessThread::ZSlotSerialPortErr(QSerialPort::SerialPortError err)
 }
 void ZImgProcessThread::run()
 {
+    qint32 nBufSize=640*480*3*2;
+    char *pRGBBufMain=new char[nBufSize];
+    char *pRGBBufAux=new char[nBufSize];
     qDebug()<<"<MainLoop>:ImgProcessThread starts.";
     while(!gGblPara.m_bGblRst2Exit)
     {
         //1.fetch QImage from main queue.
-        QImage imgMain;
-        this->m_semaMainUsed->acquire();//已用信号量减1.
-        imgMain=this->m_queueMain->dequeue();
-        this->m_semaMainFree->release();//空闲信号量加1.
+        this->m_rbMain->m_semaUsed->acquire();//已用信号量减1.
+        this->m_rbMain->ZGetElement((qint8*)pRGBBufMain,nBufSize);
+        this->m_rbMain->m_semaFree->release();//空闲信号量加1.
+        QImage imgMain((uchar*)pRGBBufMain,640,480,QImage::Format_RGB888);
 
         //2.fetch QImage from aux queue.
-        QImage imgAux;
-        this->m_semaAuxUsed->acquire();//已用信号量减1.
-        imgAux=this->m_queueAux->dequeue();
-        this->m_semaAuxFree->release();//空闲信号量加1.
+        this->m_rbAux->m_semaUsed->acquire();//已用信号量减1.
+        this->m_rbAux->ZGetElement((qint8*)pRGBBufAux,nBufSize);
+        this->m_rbAux->m_semaFree->release();//空闲信号量加1.
+        QImage imgAux((uchar*)pRGBBufAux,640,480,QImage::Format_RGB888);
 
         //3.将QImage转换为cvMat以方便openCV处理.
         cv::Mat mat1=QImage2cvMat(imgMain);
@@ -198,6 +185,8 @@ void ZImgProcessThread::run()
         //qDebug()<<"processed 2 images.";
         this->usleep(VIDEO_THREAD_SCHEDULE_US);
     }
+    delete [] pRGBBufMain;
+    delete [] pRGBBufAux;
     qDebug()<<"<MainLoop>:ImgProcessThread ends.";
     //此处设置本线程退出标志.
     //同时设置全局请求退出标志，请求其他线程退出.
@@ -762,6 +751,7 @@ void ZImgProcessThread::ZDoTemplateMatchResize(const cv::Mat &mat1,const cv::Mat
     this->m_semaProcessedSetFree->acquire();//空闲信号量减1.
     this->m_queueProcessedSet->enqueue(newProcessedSet);
     this->m_semaProcessedSetUsed->release();//已用信号量加1.
+    emit this->ZSigNewProcessSetArrived();
 
     //qDebug()<<"put processed set.";
     //dump diff x&y to tty UART.

@@ -7,12 +7,42 @@
 #include <QApplication>
 ZVideoTask::ZVideoTask(QObject *parent) : QObject(parent)
 {
+    this->m_cap1=NULL;//主摄像头Main图像采集线程.
+    this->m_cap2=NULL;//辅摄像头Aux图像采集线程.
+    this->m_process=NULL;//图像处理线程.
+    this->m_h264Thread=NULL;//h264图像编码线程.
+    this->m_videoTxThread=NULL;//图像的TCP传输线程.
+    this->m_tcp2Uart=NULL;//串口透传线程Android(tcp) <--> STM32(uart).
 
-    this->m_cap1=NULL;
-    this->m_cap2=NULL;
-    this->m_process=NULL;
-    this->m_videoTxThread=NULL;
-    this->m_tcp2Uart=NULL;
+    //Main CaptureThread put QImage to this queue.
+    //Main View Display UI get QImage from this queue for local display.
+    this->m_rbDispMain=NULL;
+
+    //Aux CaptureThread put QImage to this queue.
+    //Aux View Display UI get QImage from this queue for local display.
+    this->m_rbDispAux=NULL;
+
+    //Main CaptureThread put QImage to this queue.
+    //ImgProcessThread get QImage from this queue.
+    this->m_rbProcessMain=NULL;
+
+    //Aux CaptureThread put QImage to this queue.
+    //ImgProcessThread get QImage from this queue.
+    this->m_rbProcessAux=NULL;
+
+    //Main CaptureThread put yuv to this queue.
+    //H264 EncodeThread get yuv from this queue.
+    this->m_rbYUV=NULL;
+
+    //H264EncThread put h264 frame to this queue.
+    //TcpTxThread get data from this queue.
+    this->m_rbH264=NULL;
+
+    //ImgProcessThread put data to this queue.
+    //Main UI get data from this queue.
+    this->m_queueProcessedSet=NULL;
+    this->m_semaProcessedSetUsed=NULL;
+    this->m_semaProcessedSetFree=NULL;
 }
 ZVideoTask::~ZVideoTask()
 {
@@ -37,20 +67,14 @@ ZVideoTask::~ZVideoTask()
         delete this->m_cap2;
     }
 }
-qint32 ZVideoTask::ZBindMainDispQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZVideoTask::ZBindMainDispQueue(ZRingBuffer *rbDispMain)
 {
-    //main capture thread to local display queue.
-    this->m_queueMainDisp=queue;
-    this->m_semaMainDispUsed=semaUsed;
-    this->m_semaMainDispFree=semaFree;
+    this->m_rbDispMain=rbDispMain;
     return 0;
 }
-qint32 ZVideoTask::ZBindAuxDispQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZVideoTask::ZBindAuxDispQueue(ZRingBuffer *rbDispAux)
 {
-    //aux capture thread to local display queue.
-    this->m_queueAuxDisp=queue;
-    this->m_semaAuxDispUsed=semaUsed;
-    this->m_semaAuxDispFree=semaFree;
+    this->m_rbDispAux=rbDispAux;
     return 0;
 }
 qint32 ZVideoTask::ZBindImgProcessedSet(QQueue<ZImgProcessedSet> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
@@ -60,16 +84,14 @@ qint32 ZVideoTask::ZBindImgProcessedSet(QQueue<ZImgProcessedSet> *queue,QSemapho
     this->m_semaProcessedSetFree=semaFree;
     return 0;
 }
-qint32 ZVideoTask::ZStartTask()
+qint32 ZVideoTask::ZDoInit()
 {
+
     ZFilteCAMDev filteCAMDev;
     QStringList lstRealDev=filteCAMDev.ZGetCAMDevList();
     if(lstRealDev.size()<2)
     {
-        if(gGblPara.m_bVerbose)
-        {
-            qDebug()<<"<error>:cannot find two Video Nodes!";
-        }
+        qDebug()<<"<error>:failed to find 2 cameras.";
         return -1;
     }
 
@@ -84,49 +106,64 @@ qint32 ZVideoTask::ZStartTask()
 
     /////////////////////////////the main camera queue///////////////////////////
     //main capture thread to img process queue.
-    this->m_queueMainProcess=new QQueue<QImage>;
-    this->m_semaMainProcessUsed=new QSemaphore(0);
-    this->m_semaMainProcessFree=new QSemaphore(15);//30fps,5sec.
+    this->m_rbProcessMain=new ZRingBuffer(30,640*480*3*2);
     //main capture thread to yuv queue.
-    this->m_queueYUV=new QQueue<QByteArray>;
-    this->m_semaYUVUsed=new QSemaphore(0);
-    this->m_semaYUVFree=new QSemaphore(15);
-
+    this->m_rbYUV=new ZRingBuffer(30,640*480*3*2);
     ////////////////////////////////the aux camera queue///////////////////////////
     //aux capture thread to img process queue.
-    this->m_queueAuxProcess=new QQueue<QImage>;
-    this->m_semaAuxProcessUsed=new QSemaphore(0);
-    this->m_semaAuxProcessFree=new QSemaphore(15);
-
+    this->m_rbProcessAux=new ZRingBuffer(30,640*480*3*2);
     ///////////////////////////////*h264 encode result queue/////////////////////////////
-    this->m_queueH264=new QQueue<QByteArray>;
-    this->m_semaH264Used=new QSemaphore(0);
-    this->m_semaH264Free=new QSemaphore(15);
+    this->m_rbH264=new ZRingBuffer(30,640*480*3*2);
 
     //create capture thread.
     this->m_cap1=new ZImgCapThread(cam1Device,gGblPara.m_widthCAM1,gGblPara.m_heightCAM1,gGblPara.m_fpsCAM1,true);//Main Camera.
-    this->m_cap1->ZBindDispQueue(this->m_queueMainDisp,this->m_semaMainDispUsed,this->m_semaMainDispFree);
-    this->m_cap1->ZBindProcessQueue(this->m_queueMainProcess,this->m_semaMainProcessUsed,this->m_semaMainProcessFree);
-    this->m_cap1->ZBindYUVQueue(this->m_queueYUV,this->m_semaYUVUsed,this->m_semaYUVFree);
+    this->m_cap1->ZBindDispQueue(this->m_rbDispMain);
+    this->m_cap1->ZBindProcessQueue(this->m_rbProcessMain);
+    this->m_cap1->ZBindYUVQueue(this->m_rbYUV);
 
     this->m_cap2=new ZImgCapThread(cam2Device,gGblPara.m_widthCAM2,gGblPara.m_heightCAM2,gGblPara.m_fpsCAM2,false);
-    this->m_cap2->ZBindDispQueue(this->m_queueAuxDisp,this->m_semaAuxDispUsed,this->m_semaAuxDispFree);
-    this->m_cap2->ZBindProcessQueue(this->m_queueAuxProcess,this->m_semaAuxProcessUsed,this->m_semaAuxProcessFree);
+    this->m_cap2->ZBindDispQueue(this->m_rbDispAux);
+    this->m_cap2->ZBindProcessQueue(this->m_rbProcessAux);
 
     //create h264 encode thread.
     this->m_h264Thread=new ZH264EncThread;
-    this->m_h264Thread->ZBindYUVQueue(this->m_queueYUV,this->m_semaYUVUsed,this->m_semaYUVFree);
-    this->m_h264Thread->ZBindH264Queue(this->m_queueH264,this->m_semaH264Used,this->m_semaH264Free);
+    this->m_h264Thread->ZBindYUVQueue(this->m_rbYUV);
+    this->m_h264Thread->ZBindH264Queue(this->m_rbH264);
 
     //create image process thread.
     this->m_process=new ZImgProcessThread;
-    this->m_process->ZBindMainQueue(this->m_queueMainProcess,this->m_semaMainProcessUsed,this->m_semaMainProcessFree);
-    this->m_process->ZBindAuxQueue(this->m_queueAuxProcess,this->m_semaAuxProcessUsed,this->m_semaAuxProcessFree);
+    this->m_process->ZBindMainQueue(this->m_rbProcessMain);
+    this->m_process->ZBindAuxQueue(this->m_rbProcessAux);
     this->m_process->ZBindProcessedSetQueue(this->m_queueProcessedSet,this->m_semaProcessedSetUsed,this->m_semaProcessedSetFree);
 
     //start tcp server.
     this->m_videoTxThread=new ZVideoTxThread;
-    this->m_videoTxThread->ZBindQueue(this->m_queueH264,this->m_semaH264Used,this->m_semaH264Free);
+    this->m_videoTxThread->ZBindQueue(this->m_rbH264);
+    return 0;
+}
+ZImgCapThread* ZVideoTask::ZGetImgCapThread(qint32 index)
+{
+    ZImgCapThread *capThread=NULL;
+    switch(index)
+    {
+    case 0:
+        capThread=this->m_cap1;
+        break;
+    case 1:
+        capThread=this->m_cap2;
+        break;
+    default:
+        break;
+    }
+    return capThread;
+}
+ZImgProcessThread* ZVideoTask::ZGetImgProcessThread()
+{
+    return this->m_process;
+}
+qint32 ZVideoTask::ZStartTask()
+{
+
     this->m_videoTxThread->ZStartThread();
 
     //start h264 thread.

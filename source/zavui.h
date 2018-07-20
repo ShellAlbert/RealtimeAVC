@@ -16,23 +16,28 @@
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QtCharts>
 #include "xyseriesiodevice.h"
+#include <zringbuffer.h>
 class ZAVUI : public QFrame
 {
     Q_OBJECT
 public:
     ZAVUI(QWidget *parent=nullptr);
     ~ZAVUI();
-    qint32 ZBindMainDispQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
-    qint32 ZBindAuxDispQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
+    qint32 ZBindMainDispQueue(ZRingBuffer *rbDispMain);
+    qint32 ZBindAuxDispQueue(ZRingBuffer *rbDispAux);
     qint32 ZBindImgProcessedSet(QQueue<ZImgProcessedSet> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
 
-    qint32 ZBindWaveFormQueueBefore(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
-    qint32 ZBindWaveFormQueueAfter(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
+    qint32 ZBindWaveFormQueueBefore(ZRingBuffer *rbWaveBefore);
+    qint32 ZBindWaveFormQueueAfter(ZRingBuffer *rbWaveAfter);
+
+    ZImgDisplayer *ZGetImgDisp(qint32 index);
 private slots:
     void ZSlotSSIMImgSimilarity(qint32 nVal);
     void ZSlot1sTimeout();
-    void ZSlotDrawAudioWaveForm();
-    void ZSlotDispatchProcessedSet();
+public slots:
+    void ZSlotFlushWaveBefore();
+    void ZSlotFlushWaveAfter();
+    void ZSlotFlushProcessedSet();
 private:
     void ZUpdateMatchBar(QProgressBar *pBar,qint32 nVal);
 protected:
@@ -43,7 +48,6 @@ private:
     QQueue<ZImgProcessedSet> *m_queueProcessedSet;
     QSemaphore *m_semaProcessedSetUsed;
     QSemaphore *m_semaProcessedSetFree;
-    QTimer *m_timerDispatch;
 private:
     //像素坐标差值及算法消耗时间.
     QLabel *m_llDiffXY;
@@ -82,14 +86,9 @@ private:
     QChartView *m_chartViewAfter;
     QChart *m_chartAfter;
 private:
-    //波形显示队列，降噪算法处理之前与处理之后波形比对
-     QQueue<QByteArray> *m_queueWavBefore;
-     QSemaphore *m_semaUsedWavBefore;
-     QSemaphore *m_semaFreeWavBefore;
-
-     QQueue<QByteArray> *m_queueWavAfter;
-     QSemaphore *m_semaUsedWavAfter;
-     QSemaphore *m_semaFreeWavAfter;
+    //波形显示队列，降噪算法处理之前与处理之后波形比对.
+    ZRingBuffer *m_rbWaveBefore;
+    ZRingBuffer *m_rbWaveAfter;
 };
 
 #endif // ZAVUI_H

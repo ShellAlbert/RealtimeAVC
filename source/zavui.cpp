@@ -110,19 +110,11 @@ ZAVUI::ZAVUI(QWidget *parent):QFrame(parent)
     this->m_timer=new QTimer;
     QObject::connect(this->m_timer,SIGNAL(timeout()),this,SLOT(ZSlot1sTimeout()));
     this->m_timer->start(1000);
-
-    //fetch processed set timer.
-    this->m_timerDispatch=new QTimer;
-    QObject::connect(this->m_timerDispatch,SIGNAL(timeout()),this,SLOT(ZSlotDispatchProcessedSet()));
-    this->m_timerDispatch->start(20);
 }
 ZAVUI::~ZAVUI()
 {
     this->m_timer->stop();
-    this->m_timerDispatch->stop();
     delete this->m_timer;
-    delete this->m_timerDispatch;
-
     //wav form.
     delete this->m_seriesBefore;
     delete this->m_deviceBefore;
@@ -158,14 +150,14 @@ void ZAVUI::closeEvent(QCloseEvent *event)
     gGblPara.m_bGblRst2Exit=true;
     event->ignore();
 }
-qint32 ZAVUI::ZBindMainDispQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZAVUI::ZBindMainDispQueue(ZRingBuffer *rbDispMain)
 {
-    this->m_disp[0]->ZBindQueue(queue,semaUsed,semaFree);
+    this->m_disp[0]->ZBindQueue(rbDispMain);
     return 0;
 }
-qint32 ZAVUI::ZBindAuxDispQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZAVUI::ZBindAuxDispQueue(ZRingBuffer *rbDispAux)
 {
-    this->m_disp[1]->ZBindQueue(queue,semaUsed,semaFree);
+    this->m_disp[1]->ZBindQueue(rbDispAux);
     return 0;
 }
 qint32 ZAVUI::ZBindImgProcessedSet(QQueue<ZImgProcessedSet> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
@@ -175,19 +167,19 @@ qint32 ZAVUI::ZBindImgProcessedSet(QQueue<ZImgProcessedSet> *queue,QSemaphore *s
     this->m_semaProcessedSetFree=semaFree;
     return 0;
 }
-qint32 ZAVUI::ZBindWaveFormQueueBefore(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZAVUI::ZBindWaveFormQueueBefore(ZRingBuffer *rbWaveBefore)
 {
-    this->m_queueWavBefore=queue;
-    this->m_semaUsedWavBefore=semaUsed;
-    this->m_semaFreeWavBefore=semaFree;
+    this->m_rbWaveBefore=rbWaveBefore;
     return 0;
 }
-qint32 ZAVUI::ZBindWaveFormQueueAfter(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZAVUI::ZBindWaveFormQueueAfter(ZRingBuffer *rbWaveAfter)
 {
-    this->m_queueWavAfter=queue;
-    this->m_semaUsedWavAfter=semaUsed;
-    this->m_semaFreeWavAfter=semaFree;
+    this->m_rbWaveAfter=rbWaveAfter;
     return 0;
+}
+ZImgDisplayer* ZAVUI::ZGetImgDisp(qint32 index)
+{
+    return this->m_disp[index];
 }
 void ZAVUI::ZSlotSSIMImgSimilarity(qint32 nVal)
 {
@@ -222,13 +214,13 @@ void ZAVUI::ZSlot1sTimeout()
 
     //update the connected flags.
     QString audioClient("X");
-    if(gGblPara.m_audio.m_bTcpAudioConnected)
+    if(gGblPara.m_audio.m_bAudioTcpConnected)
     {
         audioClient="V";
     }
 
     QString videoClient("X");
-    if(gGblPara.m_bTcpClientConnected)
+    if(gGblPara.m_bVideoTcpConnected)
     {
         videoClient="V";
     }
@@ -267,26 +259,29 @@ void ZAVUI::ZUpdateMatchBar(QProgressBar *pBar,qint32 nVal)
         pBar->setStyleSheet("QProgressBar::chunk{ background-color:#FF0000}");
     }
 }
-void ZAVUI::ZSlotDrawAudioWaveForm()
+void ZAVUI::ZSlotFlushWaveBefore()
 {
     //fetch data from wav form queue before and write it to wav form device.
-    QByteArray baPCMBeforeProcess;
-    if(this->m_semaUsedWavBefore->tryAcquire())
+    if(this->m_rbWaveBefore->m_semaUsed->tryAcquire())
     {
-        baPCMBeforeProcess=this->m_queueWavBefore->dequeue();
-        this->m_semaFreeWavBefore->release();
-        this->m_deviceBefore->write(baPCMBeforeProcess);
-    }
-
-    QByteArray baPCMBeforeAfter;
-    if(this->m_semaUsedWavAfter->tryAcquire())
-    {
-        baPCMBeforeAfter=this->m_queueWavAfter->dequeue();
-        this->m_semaFreeWavAfter->release();
-        this->m_deviceAfter->write(baPCMBeforeAfter);
+        char buffer[BLOCK_SIZE];
+        qint32 nLen=this->m_rbWaveBefore->ZGetElement((qint8*)buffer,sizeof(buffer));
+        this->m_rbWaveBefore->m_semaFree->release();
+        this->m_deviceBefore->write(buffer,nLen);
     }
 }
-void ZAVUI::ZSlotDispatchProcessedSet()
+void ZAVUI::ZSlotFlushWaveAfter()
+{
+    //fetch data from wav form queue before and write it to wav form device.
+    if(this->m_rbWaveAfter->m_semaUsed->tryAcquire())
+    {
+        char buffer[BLOCK_SIZE];
+        qint32 nLen=this->m_rbWaveAfter->ZGetElement((qint8*)buffer,sizeof(buffer));
+        this->m_rbWaveAfter->m_semaFree->release();
+        this->m_deviceAfter->write(buffer,nLen);
+    }
+}
+void ZAVUI::ZSlotFlushProcessedSet()
 {
     //fetch processed set from processedSet queue.
     //and dispatch them to local two displayer.
@@ -300,5 +295,4 @@ void ZAVUI::ZSlotDispatchProcessedSet()
         this->m_disp[1]->ZSetSensitiveRect(processSet.rectMatched);
         this->m_llDiffXY->setText(tr("Diff XYT\n[X:%1 Y:%2 T:%3ms]").arg(processSet.nDiffX).arg(processSet.nDiffY).arg(processSet.nCostMs));
     }
-    this->ZSlotDrawAudioWaveForm();
 }

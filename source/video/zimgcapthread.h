@@ -9,6 +9,7 @@
 #include <QQueue>
 #include <QByteArray>
 #include <QSemaphore>
+#include <zringbuffer.h>
 class ZImgCapThread : public QThread
 {
     Q_OBJECT
@@ -16,9 +17,9 @@ public:
     explicit ZImgCapThread(QString devNodeName,qint32 nPreWidth,qint32 nPreHeight,qint32 nPreFps,bool bMainCamera=false);
     ~ZImgCapThread();
 
-    qint32 ZBindDispQueue(QQueue<QImage> *queueDisp,QSemaphore *semaDispUsed,QSemaphore *semaDispFree);
-    qint32 ZBindProcessQueue(QQueue<QImage> *queueProcess,QSemaphore *semaProcessUsed,QSemaphore *semaProcessFree);
-    qint32 ZBindYUVQueue(QQueue<QByteArray> *queueYUV,QSemaphore *semaYUVUsed,QSemaphore *semaYUVFree);
+    qint32 ZBindDispQueue(ZRingBuffer *rbDisp);
+    qint32 ZBindProcessQueue(ZRingBuffer *rbProcess);
+    qint32 ZBindYUVQueue(ZRingBuffer *rbYUV);
 
     qint32 ZStartThread();
     qint32 ZStopThread();
@@ -32,6 +33,7 @@ public:
 
     QString ZGetCAMID();
 signals:
+    void ZSigNewImgArrived();
     void ZSigMsg(const QString &msg,const qint32 &type);
     void ZSigThreadFinished();
     void ZSigCAMIDFind(QString camID);
@@ -43,17 +45,12 @@ private:
     ZCAMDevice *m_cam;
 private:
     //capture image to local display queue.
-    QQueue<QImage> *m_queueDisp;
-    QSemaphore *m_semaDispUsed;
-    QSemaphore *m_semaDispFree;
+    ZRingBuffer *m_rbDisp;
     //capture image to process queue.
-    QQueue<QImage> *m_queueProcess;
-    QSemaphore *m_semaProcessUsed;
-    QSemaphore *m_semaProcessFree;
+    ZRingBuffer *m_rbProcess;
     //capture yuv to yuv queue.
-    QQueue<QByteArray> *m_queueYUV;
-    QSemaphore *m_semaYUVUsed;
-    QSemaphore *m_semaYUVFree;
+    ZRingBuffer *m_rbYUV;
+
     bool m_bMainCamera;
 private:
     bool m_bExitFlag;

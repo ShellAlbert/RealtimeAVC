@@ -6,12 +6,13 @@
 #include <QSemaphore>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <zringbuffer.h>
 class ZVideoTxThread : public QThread
 {
     Q_OBJECT
 public:
     ZVideoTxThread();
-    qint32 ZBindQueue(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
+    qint32 ZBindQueue(ZRingBuffer *rbH264);
     qint32 ZStartThread();
     qint32 ZStopThread();
 signals:
@@ -20,9 +21,7 @@ signals:
 protected:
     void run();
 private:
-    QQueue<QByteArray> *m_queue;
-    QSemaphore *m_semaUsed;
-    QSemaphore *m_semaFree;
+    ZRingBuffer *m_rbH264;
     bool m_bExitFlag;
 };
 

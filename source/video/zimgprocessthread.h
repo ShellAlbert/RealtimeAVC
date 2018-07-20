@@ -19,16 +19,15 @@
 #include <QQueue>
 #include <QSemaphore>
 #include <QByteArray>
-
-
+#include <zringbuffer.h>
 class ZImgProcessThread : public QThread
 {
     Q_OBJECT
 public:
     ZImgProcessThread();
     ~ZImgProcessThread();
-    qint32 ZBindMainQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
-    qint32 ZBindAuxQueue(QQueue<QImage> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
+    qint32 ZBindMainQueue(ZRingBuffer *rbMain);
+    qint32 ZBindAuxQueue(ZRingBuffer *rbAux);
     qint32 ZBindProcessedSetQueue(QQueue<ZImgProcessedSet> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
     qint32 ZStartThread();
     qint32 ZStopThread();
@@ -36,6 +35,8 @@ public:
 protected:
     void run();
 signals:
+    void ZSigNewProcessSetArrived();
+
     void ZSigThreadFinished();
     void ZSigMsg(const QString &msg,const qint32 &type);
     void ZSigImgGlobal(QImage img);
@@ -115,14 +116,8 @@ private:
     QByteArray m_baUARTRecvBuf;
 
 private:
-    QQueue<QImage> *m_queueMain;
-    QSemaphore *m_semaMainUsed;
-    QSemaphore *m_semaMainFree;
-
-    QQueue<QImage> *m_queueAux;
-    QSemaphore *m_semaAuxUsed;
-    QSemaphore *m_semaAuxFree;
-
+    ZRingBuffer *m_rbMain;
+    ZRingBuffer *m_rbAux;
 private:
     QQueue<ZImgProcessedSet> *m_queueProcessedSet;
     QSemaphore *m_semaProcessedSetUsed;

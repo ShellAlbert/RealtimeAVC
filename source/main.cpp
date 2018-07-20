@@ -10,6 +10,7 @@
 #include <video/zvideotask.h>
 #include <forward/ztcp2uartforwardthread.h>
 #include <zavui.h>
+#include <zringbuffer.h>
 void gSIGHandler(int sigNo)
 {
     switch(sigNo)
@@ -30,6 +31,35 @@ void gSIGHandler(int sigNo)
 
 int main(int argc,char **argv)
 {
+#if 0
+    ZRingBuffer  ringBuf(5,10);
+    char buffer[10];
+    int i=0;
+    while(1)
+    {
+        if(!ringBuf.m_semaFree->tryAcquire())
+        {
+            qDebug()<<"ringbuf is full.";
+            break;
+        }
+        sprintf(buffer,"test%d",i++);
+        ringBuf.ZPutElement((qint8*)buffer,strlen(buffer));
+        qDebug()<<"put:"<<QString(buffer);
+        ringBuf.m_semaUsed->release();
+    }
+    while(1)
+    {
+        if(!ringBuf.m_semaUsed->tryAcquire())
+        {
+            qDebug()<<"ring buffer is empty.";
+            break;
+        }
+        ringBuf.ZGetElement((qint8*)buffer,sizeof(buffer));
+        qDebug()<<"get:"<<QString(buffer);
+        ringBuf.m_semaFree->release();
+    }
+    return 0;
+#endif
     QApplication app(argc,argv);
     ///////////////////////////////////////////////////////
     //parse audio command line arguments.
@@ -236,15 +266,11 @@ int main(int argc,char **argv)
 
     //Main CaptureThread put QImage to this queue.
     //Main View Display UI get QImage from this queue for local display.
-    QQueue<QImage> *queueMainDisp=new QQueue<QImage>;
-    QSemaphore *semaMainDispUsed=new QSemaphore(0);
-    QSemaphore *semaMainDispFree=new QSemaphore(30);
+    ZRingBuffer *rbDispMain=new ZRingBuffer(30,640*480*3*2);
 
     //Aux CaptureThread put QImage to this queue.
     //Aux View Display UI get QImage from this queue for local display.
-    QQueue<QImage> *queueAuxDisp=new QQueue<QImage>;
-    QSemaphore *semaAuxDispUsed=new QSemaphore(0);
-    QSemaphore *semaAuxDispFree=new QSemaphore(30);
+    ZRingBuffer *rbDispAux=new ZRingBuffer(30,640*480*3*2);
 
     //queue for connect VideoTask/ImgProcessThread and AVUI/LocalDisplay.
     QQueue<ZImgProcessedSet> *queueProcessedSet=new QQueue<ZImgProcessedSet>;
@@ -252,14 +278,9 @@ int main(int argc,char **argv)
     QSemaphore *semaProcessedSetFree=new QSemaphore(30);
 
     //本地音频波形绘制队列,采集的原始波形.
-    QQueue<QByteArray> *queueWavBefore=new QQueue<QByteArray>;
-    QSemaphore *semaUsedWavBefore=new QSemaphore(0);
-    QSemaphore *semaFreeWavBefore=new QSemaphore(30);
-
+    ZRingBuffer *rbWaveBefore=new ZRingBuffer(30,BLOCK_SIZE);
     //经过降噪算法处理过的数据波形.
-    QQueue<QByteArray> *queueWavAfter=new QQueue<QByteArray>;
-    QSemaphore *semaUsedWavAfter=new QSemaphore(0);
-    QSemaphore *semaFreeWavAfter=new QSemaphore(30);
+    ZRingBuffer *rbWaveAfter=new ZRingBuffer(30,BLOCK_SIZE);
 
 
     //start Android(tcp) <--> STM32(uart) forward task.
@@ -268,8 +289,8 @@ int main(int argc,char **argv)
 
     //audio task.
     ZAudioTask taskAudio;
-    taskAudio.ZBindWaveFormQueueBefore(queueWavBefore,semaUsedWavBefore,semaFreeWavBefore);
-    taskAudio.ZBindWaveFormQueueAfter(queueWavAfter,semaUsedWavAfter,semaFreeWavAfter);
+    taskAudio.ZBindWaveFormQueueBefore(rbWaveBefore);
+    taskAudio.ZBindWaveFormQueueAfter(rbWaveAfter);
     if(taskAudio.ZStartTask()<0)
     {
         if(gGblPara.m_bVerbose)
@@ -281,9 +302,14 @@ int main(int argc,char **argv)
 
     //video task.
     ZVideoTask taskVideo;
-    taskVideo.ZBindMainDispQueue(queueMainDisp,semaMainDispUsed,semaMainDispFree);
-    taskVideo.ZBindAuxDispQueue(queueAuxDisp,semaAuxDispUsed,semaAuxDispFree);
+    taskVideo.ZBindMainDispQueue(rbDispMain);
+    taskVideo.ZBindAuxDispQueue(rbDispAux);
     taskVideo.ZBindImgProcessedSet(queueProcessedSet,semaProcessedSetUsed,semaProcessedSetFree);
+    if(taskVideo.ZDoInit()<0)
+    {
+        qDebug()<<"<error>:failed to init video task.";
+        return -1;
+    }
     if(taskVideo.ZStartTask()<0)
     {
         if(gGblPara.m_bVerbose)
@@ -295,12 +321,27 @@ int main(int argc,char **argv)
 
     //AV UI.
     ZAVUI avUI;
-    avUI.ZBindMainDispQueue(queueMainDisp,semaMainDispUsed,semaMainDispFree);
-    avUI.ZBindAuxDispQueue(queueAuxDisp,semaAuxDispUsed,semaAuxDispFree);
+    avUI.ZBindMainDispQueue(rbDispMain);
+    avUI.ZBindAuxDispQueue(rbDispAux);
     avUI.ZBindImgProcessedSet(queueProcessedSet,semaProcessedSetUsed,semaProcessedSetFree);
-    avUI.ZBindWaveFormQueueBefore(queueWavBefore,semaUsedWavBefore,semaFreeWavBefore);
-    avUI.ZBindWaveFormQueueAfter(queueWavAfter,semaUsedWavAfter,semaFreeWavAfter);
-    avUI.showMaximized();
+    avUI.ZBindWaveFormQueueBefore(rbWaveBefore);
+    avUI.ZBindWaveFormQueueAfter(rbWaveAfter);
 
-    return app.exec();
+    //use signal-slot event to notify local UI flush.
+    QObject::connect(taskVideo.ZGetImgCapThread(0),SIGNAL(ZSigNewImgArrived()),avUI.ZGetImgDisp(0),SLOT(ZSlotFetchNewImg()),Qt::AutoConnection);
+    QObject::connect(taskVideo.ZGetImgCapThread(1),SIGNAL(ZSigNewImgArrived()),avUI.ZGetImgDisp(1),SLOT(ZSlotFetchNewImg()),Qt::AutoConnection);
+    //use signal-slot event to notify UI to flush new image process set.
+    QObject::connect(taskVideo.ZGetImgProcessThread(),SIGNAL(ZSigNewProcessSetArrived()),&avUI,SLOT(ZSlotFlushProcessedSet()),Qt::AutoConnection);
+    //use signal-slot event to flush wave form.
+    QObject::connect(taskAudio.ZGetNoiseCutThread(),SIGNAL(ZSigNewWaveBeforeArrived()),&avUI,SLOT(ZSlotFlushWaveBefore()),Qt::AutoConnection);
+    QObject::connect(taskAudio.ZGetNoiseCutThread(),SIGNAL(ZSigNewWaveAfterArrived()),&avUI,SLOT(ZSlotFlushWaveAfter()),Qt::AutoConnection);
+
+    avUI.showMaximized();
+    //enter event-loop.
+    int ret=app.exec();
+
+    delete rbDispMain;
+    delete rbDispAux;
+
+    return ret;
 }

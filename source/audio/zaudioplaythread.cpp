@@ -11,12 +11,9 @@ ZAudioPlayThread::~ZAudioPlayThread()
 
 }
 
-qint32 ZAudioPlayThread::ZStartThread(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
+qint32 ZAudioPlayThread::ZStartThread(ZRingBuffer *rbClear)
 {
-    this->m_queue=queue;
-    this->m_semaUsed=semaUsed;
-    this->m_semaFree=semaFree;
-
+    this->m_rbClear=rbClear;
     this->m_bExitFlag=false;
     this->start();
     return 0;
@@ -190,16 +187,19 @@ void ZAudioPlayThread::run()
     while(!gGblPara.m_bGblRst2Exit)
     {
         //wait until the queue has 5 frames.
-        if(this->m_semaUsed->available()<10)
-        {
-            continue;
-        }
+//        if(this->m_semaUsed->available()<10)
+//        {
+//            continue;
+//        }
 
         //fetch data from queue.
-        QByteArray baPCMData;
-        this->m_semaUsed->acquire();//已用信号量减1.
-        baPCMData=this->m_queue->dequeue();
-        this->m_semaFree->release();//空闲信号量加1.
+//        QByteArray baPCMData;
+//        this->m_semaUsed->acquire();//已用信号量减1.
+//        baPCMData=this->m_queue->dequeue();
+//        this->m_semaFree->release();//空闲信号量加1.
+        this->m_rbClear->m_semaUsed->acquire();
+        qint32 nPCMLen=this->m_rbClear->ZGetElement((qint8*)pcmBuffer,BLOCK_SIZE);
+        this->m_rbClear->m_semaFree->release();
 #if 0
         //如果数据量不够，则开始整理数据.
         if(nPCMBufferLen<BLOCK_SIZE)
@@ -248,10 +248,10 @@ void ZAudioPlayThread::run()
             //qDebug()<<"reserve remaing bytes:"<<nRemaingBytes;
         }
 #else
-        snd_pcm_uframes_t pcmFrames=baPCMData.size()/BYTES_PER_FRAME;
+        snd_pcm_uframes_t pcmFrames=nPCMLen/BYTES_PER_FRAME;
         //qDebug()<<"playback: get pcm data:"<<baPCMData.size()<<",pcmFrames:"<<(int)pcmFrames;
         //send data to pcm.
-        while(snd_pcm_writei(pcmHandle,baPCMData.data(),pcmFrames)<0)
+        while(snd_pcm_writei(pcmHandle,pcmBuffer,pcmFrames)<0)
         {
             snd_pcm_prepare(pcmHandle);
             //qDebug("<playback>:Buffer Underrun");

@@ -1,11 +1,11 @@
 #include "zimgdisplayer.h"
 #include <QPainter>
 #include <QDebug>
+#include <QDateTime>
 ZImgDisplayer::ZImgDisplayer(qint32 nCenterX,qint32 nCenterY,bool bMainCamera,QWidget *parent) : QWidget(parent)
 {
     this->m_nCenterX=nCenterX;
     this->m_nCenterY=nCenterY;
-    this->m_nTriggerCounter=0;
     this->m_colorRect=QColor(0,255,0);
     this->m_bMainCamera=bMainCamera;
     this->m_nSensitiveCenterX=0;
@@ -35,9 +35,8 @@ ZImgDisplayer::ZImgDisplayer(qint32 nCenterX,qint32 nCenterY,bool bMainCamera,QW
             }
         }
     }
-
-    this->m_rbDisp=NULL;
-    this->m_pRGBBuffer=new char[640*480*3*2];
+    this->m_nFrmCounter=0;
+    this->m_nLastTs=QDateTime::currentMSecsSinceEpoch();
 }
 ZImgDisplayer::~ZImgDisplayer()
 {
@@ -58,19 +57,9 @@ void ZImgDisplayer::ZSetSensitiveRect(QRect rect)
     this->m_nSensitiveCenterX=this->m_rectSensitiveScaled.x()+this->m_rectSensitiveScaled.width()/2;
     this->m_nSensitiveCenterY=this->m_rectSensitiveScaled.y()+this->m_rectSensitiveScaled.height()/2;
 }
-void ZImgDisplayer::ZSetCAMParameters(qint32 nWidth,qint32 nHeight,qint32 nFps,QString camID)
-{
-    this->m_nCAMFps=15;
-    this->m_camID=camID;
-}
 void ZImgDisplayer::ZSetPaintParameters(QColor colorRect)
 {
     this->m_colorRect=colorRect;
-}
-void ZImgDisplayer::ZBindQueue(ZRingBuffer *rbDisp)
-{
-    this->m_rbDisp=rbDisp;
-    return;
 }
 QSize ZImgDisplayer::sizeHint() const
 {
@@ -182,32 +171,28 @@ void ZImgDisplayer::resizeEvent(QResizeEvent *event)
 
     QWidget::resizeEvent(event);
 }
-void ZImgDisplayer::ZSlotFetchNewImg()
+void ZImgDisplayer::ZSlotFlushImg(const QImage &img)
 {
-    //paint now.
-    this->m_nTriggerCounter++;
+    this->m_img=img;
+
+    //calculate the fps.
+    this->m_nFrmCounter++;
+    qint64 nNowTs=QDateTime::currentMSecsSinceEpoch();
+    //qDebug()<<"nNowTs="<<nNowTs<<",nLastTs="<<this->m_nLastTs;
+    if((nNowTs-this->m_nLastTs)>1000)
+    {
+        this->m_nCAMFps=this->m_nFrmCounter;
+        this->m_nFrmCounter=0;
+        this->m_nLastTs=nNowTs;
+    }
+
     this->update();
 }
 void ZImgDisplayer::paintEvent(QPaintEvent *e)
 {
     Q_UNUSED(e);
-
-
-    if(!this->m_rbDisp->m_semaUsed->tryAcquire())//已用信号量减1,这里使用tryAcquire()防止阻塞.
-    {
-        return;
-    }
-    qint32 nRGBLen=this->m_rbDisp->ZGetElement((qint8*)this->m_pRGBBuffer,640*480*3*2);
-    this->m_rbDisp->m_semaFree->release();//空闲信号量加1.
-    if(nRGBLen<0)
-    {
-        qDebug()<<"<error>:error RGB length.";
-        return;
-    }
-    QImage newImg((uchar*)this->m_pRGBBuffer,640,480,QImage::Format_RGB888);
-
     QPainter painter(this);
-    if(newImg.isNull())
+    if(this->m_img.isNull())
     {
         painter.fillRect(QRectF(0,0,this->width(),this->height()),Qt::black);
         QPen pen(Qt::green,4);
@@ -218,7 +203,7 @@ void ZImgDisplayer::paintEvent(QPaintEvent *e)
     }
     //draw the image.
     QRectF rectIMG(0,0,this->width(),this->height());
-    painter.drawImage(rectIMG,newImg);
+    painter.drawImage(rectIMG,this->m_img);
 
     //set font & pen.
     QFont tFont=painter.font();
@@ -238,15 +223,51 @@ void ZImgDisplayer::paintEvent(QPaintEvent *e)
     //对于辅助镜头来讲，绘制一条直接从校正坐标原点到匹配到的区域中心点.
     painter.drawLine(QPointF(this->m_nSensitiveCenterX,this->m_nSensitiveCenterY),QPointF(this->m_nCenterX*this->m_fRatioWidth,this->m_nCenterY*this->m_fRatioHeight));
 
+    //draw some others message.
+    QString camInfo;
+    if(this->m_bMainCamera)
+    {
+        camInfo.append("Main\n");
+    }else{
+        camInfo.append("Aux\n");
+    }
+    camInfo.append(tr("%1*%2\n").arg(this->m_nCamWidth).arg(this->m_nCamHeight));
+    camInfo.append(tr("%1fps\n").arg(this->m_nFrmCounter));
+
+    painter.setPen(QPen(Qt::green,2,Qt::SolidLine));
+    qint32 nHeight=painter.fontMetrics().height();
+    qint32 nWidth=painter.fontMetrics().width(camInfo);
+
+    QRect rectCamInfo(0,0,nWidth*2,nHeight*3);
+    painter.drawText(rectCamInfo,camInfo);
+
+    if(this->m_bMainCamera)
+    {
+        qint32 nHeight=painter.fontMetrics().height();
+        qint32 nWidth=painter.fontMetrics().width(gGblPara.m_video.m_Cam1ID);
+        QRect rectCamID(0,this->height()-nHeight,nWidth+10,nHeight);
+        painter.drawText(rectCamID,gGblPara.m_video.m_Cam1ID);
+    }else{
+        qint32 nHeight=painter.fontMetrics().height();
+        qint32 nWidth=painter.fontMetrics().width(gGblPara.m_video.m_Cam2ID);
+        QRect rectCamID(0,this->height()-nHeight,nWidth+10,nHeight);
+        painter.drawText(rectCamID,gGblPara.m_video.m_Cam2ID);
+    }
+
+    //draw the current time.
+    QString strDT=QDateTime::currentDateTime().toString("yyyy/MM/dd hh:mm:ss");
+    qint32 nDTWidth=painter.fontMetrics().width(strDT);
+    QRect rectDT(this->width()-nDTWidth-10,this->height()-nHeight-2,nDTWidth+10,nHeight);
+    painter.drawText(rectDT,strDT);
+
     //draw the camera resolution & fps.
-    //    QString camInfo;
+    //
     //    camInfo.append(tr("%1*%2\n").arg(this->m_nCamWidth).arg(this->m_nCamHeight));
     //    camInfo.append(tr("%1fps\n").arg(this->m_nCAMFps));
     //    camInfo.append(QString::number(this->m_nTriggerCounter,10));
     //    //here plus 10 to avoid last text missing.
     //    QRect rectCAMInfo(0,0,painter.fontMetrics().width(camInfo)+10,painter.fontMetrics().height()*3);//3 lines.
     //    painter.drawText(rectCAMInfo,camInfo);
-
 
 
 #if 0

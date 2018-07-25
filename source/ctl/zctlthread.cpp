@@ -6,6 +6,8 @@
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QDateTime>
+#include <QProcess>
 ZCtlThread::ZCtlThread()
 {
 
@@ -23,6 +25,7 @@ qint32 ZCtlThread::ZStopThread()
 }
 void ZCtlThread::run()
 {
+    qDebug()<<"<MainLoop>:"<<_CURRENT_DATETIME_<<"CtlThread starts"<<TCP_PORT_CTL<<".";
     while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
     {
         QTcpServer *tcpServer=new QTcpServer;
@@ -31,12 +34,11 @@ void ZCtlThread::run()
         setsockopt(sockFd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on));
         if(!tcpServer->listen(QHostAddress::Any,TCP_PORT_CTL))
         {
-            qDebug()<<"<error>: Ctl server listen error on port:"<<TCP_PORT_CTL;
-            this->sleep(3);
+            qDebug()<<"<Error>: Ctl server listen error on port:"<<TCP_PORT_CTL;
             delete tcpServer;
-            continue;
+            break;
         }
-        qDebug()<<"<Ctl>: listen on tcp "<<TCP_PORT_CTL;
+
         //wait until get a new connection.
         while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
         {
@@ -54,7 +56,6 @@ void ZCtlThread::run()
             tcpServer->close();
             //设置连接标志.
             gGblPara.m_bCtlClientConnected=true;
-            qDebug()<<"Ctl connected.";
 
             qint32 nJsonLen=0;
             //向客户端发送音频数据包.
@@ -74,11 +75,13 @@ void ZCtlThread::run()
                         }
                         nJsonLen=QByteArrayToqint32(baJsonLen);
                     }
+                    qDebug()<<nJsonLen;
                     //如果数据长度为0,则等待下一次再读取
                     if(nJsonLen<=0)
                     {
                         continue;
                     }
+
 
                     if(tcpSocket->bytesAvailable()>=nJsonLen)
                     {
@@ -88,11 +91,17 @@ void ZCtlThread::run()
                             qDebug()<<"<error>:error when read Ctl socket.";
                             break;
                         }
+                        qDebug()<<baJsonData;
                         QJsonParseError jsonErr;
                         QJsonDocument jsonDoc=QJsonDocument::fromJson(baJsonData,&jsonErr);
                         if(jsonErr.error==QJsonParseError::NoError)
                         {
-                            this->ZParseJson(jsonDoc);
+                            QByteArray baFeedBack=this->ZParseJson(jsonDoc);
+                            if(baFeedBack.size()>0)
+                            {
+                                tcpSocket->write(baFeedBack);
+                                tcpSocket->waitForBytesWritten(1000);
+                            }
                         }
                         nJsonLen=0;//reset it.
                     }
@@ -106,123 +115,185 @@ void ZCtlThread::run()
 
             //设置连接标志.
             gGblPara.m_bCtlClientConnected=false;
-            qDebug()<<"Ctl disconnected.";
         }
         delete tcpServer;
         tcpServer=NULL;
     }
+    qDebug()<<"<MainLoop>:"<<_CURRENT_DATETIME_<<"CtlThread ends.";
 }
-void ZCtlThread::ZParseJson(const QJsonDocument &jsonDoc)
+QByteArray ZCtlThread::ZParseJson(const QJsonDocument &jsonDoc)
 {
-    if(!jsonDoc.isObject())
+    QJsonObject jsonObjFeedBack;
+    if(jsonDoc.isObject())
     {
-        qDebug()<<"<error>:failed to parse json.";
-        return;
-    }
-    QJsonObject jsonObj=jsonDoc.object();
-    if(jsonObj.contains("ImgPro"))
-    {
-        QJsonValue val=jsonObj.take("ImgPro");
-        if(val.isString())
+        QJsonObject jsonObj=jsonDoc.object();
+        if(jsonObj.contains("ImgPro"))
         {
-            QString method=val.toVariant().toString();
-            if(method=="on")
+            QJsonValue val=jsonObj.take("ImgPro");
+            if(val.isString())
             {
-                //设置图像比对开启标志位.
-                //这将引起采集线程向Process队列扔图像数据.
-                //从而ImgProcess线程解除等待开始处理图像.
-                gGblPara.m_bJsonImgPro=true;
-            }else if(method=="off")
-            {
-                //设置图像比对暂停标志位.
-                //这将引起采集线程不再向Process队列扔图像数据.
-                //使得ImgProcess线程等待信号量从而暂停.
-                gGblPara.m_bJsonImgPro=false;
-            }else if(method=="query")
-            {
-                //仅用于查询当前状态.
+                QString method=val.toVariant().toString();
+                if(method=="on")
+                {
+                    //设置图像比对开启标志位.
+                    //这将引起采集线程向Process队列扔图像数据.
+                    //从而ImgProcess线程解除等待开始处理图像.
+                    gGblPara.m_bJsonImgPro=true;
+                }else if(method=="off")
+                {
+                    //设置图像比对暂停标志位.
+                    //这将引起采集线程不再向Process队列扔图像数据.
+                    //使得ImgProcess线程等待信号量从而暂停.
+                    gGblPara.m_bJsonImgPro=false;
+                }else if(method=="query")
+                {
+                    //仅用于查询当前状态.
+                }
+                jsonObjFeedBack.insert("ImgPro",gGblPara.m_bJsonImgPro?"on":"false");
             }
         }
-    }
-    if(jsonObj.contains("RTC"))
-    {
-        QJsonValue val=jsonObj.take("RTC");
-        if(val.isString())
+        if(jsonObj.contains("RTC"))
         {
-            QString rtcStr=val.toVariant().toString();
-            qDebug()<<"RTC:"<<rtcStr;
-        }
-    }
-    if(jsonObj.contains("DeNoise"))
-    {
-        QJsonValue val=jsonObj.take("DeNoise");
-        if(val.isString())
-        {
-            QString deNoise=val.toVariant().toString();
-            qDebug()<<"deNoise:"<<deNoise;
-            if(deNoise=="off")
+            QJsonValue val=jsonObj.take("RTC");
+            if(val.isString())
             {
-
-            }else if(deNoise=="RNNoise")
-            {
-
-            }else if(deNoise=="WebRTC")
-            {
-
-            }else if(deNoise=="Bevis")
-            {
-
+                QString rtcStr=val.toVariant().toString();
+                qDebug()<<"RTC:"<<rtcStr;
+                QString cmdSetRtc=QString("date -s %1").arg(rtcStr);
+                qDebug()<<"cmdSetRtc:"<<cmdSetRtc;
+                QProcess::startDetached(cmdSetRtc);
+                QProcess::startDetached("hwclock -w");
+                QProcess::startDetached("sync");
+                jsonObjFeedBack.insert("RTC",QDateTime::currentDateTime().toString("yyyy/MM/dd hh:mm:ss"));
             }
         }
-    }
-    if(jsonObj.contains("BevisGrade"))
-    {
-        QJsonValue val=jsonObj.take("BevisGrade");
-        if(val.isString())
+        if(jsonObj.contains("DeNoise"))
         {
-            QString bevisGrade=val.toVariant().toString();
-            qDebug()<<"bevisGrade:"<<bevisGrade;
-            if(bevisGrade=="1")
+            QJsonValue val=jsonObj.take("DeNoise");
+            if(val.isString())
             {
-
-            }else if(bevisGrade=="2")
-            {
-
-            }else if(bevisGrade=="3")
-            {
-
-            }else if(bevisGrade=="4")
-            {
-
+                QString deNoise=val.toVariant().toString();
+                qDebug()<<"deNoise:"<<deNoise;
+                if(deNoise=="off")
+                {
+                    gGblPara.m_audio.m_nDeNoiseMethod=0;
+                }else if(deNoise=="RNNoise")
+                {
+                    gGblPara.m_audio.m_nDeNoiseMethod=1;
+                }else if(deNoise=="WebRTC")
+                {
+                    gGblPara.m_audio.m_nDeNoiseMethod=2;
+                }else if(deNoise=="Bevis")
+                {
+                    gGblPara.m_audio.m_nDeNoiseMethod=3;
+                }else if(deNoise=="query")
+                {
+                    //仅用于查询当前状态.
+                }
+                switch(gGblPara.m_audio.m_nDeNoiseMethod)
+                {
+                case 0:
+                    jsonObjFeedBack.insert("DeNoise","off");
+                    break;
+                case 1:
+                    jsonObjFeedBack.insert("DeNoise","RNNoise");
+                    break;
+                case 2:
+                    jsonObjFeedBack.insert("DeNoise","WebRTC");
+                    break;
+                case 3:
+                    jsonObjFeedBack.insert("DeNoise","Bevis");
+                    break;
+                default:
+                    break;
+                }
             }
         }
-    }
-    if(jsonObj.contains("DGain"))
-    {
-        QJsonValue val=jsonObj.take("DGain");
-        if(val.isString())
+        if(jsonObj.contains("BevisGrade"))
         {
-            QString dGain=val.toVariant().toString();
-            qDebug()<<"bevisGrade:"<<dGain;
-            qDebug()<<dGain.toInt();
-        }
-    }
-    if(jsonObj.contains("FlushUI"))
-    {
-        QJsonValue val=jsonObj.take("FlushUI");
-        if(val.isString())
-        {
-            QString flushUI=val.toVariant().toString();
-            if(flushUI=="on")
+            QJsonValue val=jsonObj.take("BevisGrade");
+            if(val.isString())
             {
-                gGblPara.m_bJsonFlushUI=true;
-            }else if(flushUI=="off")
-            {
-                gGblPara.m_bJsonFlushUI=false;
-            }else if(flushUI=="query")
-            {
-                //仅用于查询当前状态.
+                QString bevisGrade=val.toVariant().toString();
+                qDebug()<<"bevisGrade:"<<bevisGrade;
+                if(bevisGrade=="1")
+                {
+                    gGblPara.m_audio.m_nBevisGrade=1;
+                }else if(bevisGrade=="2")
+                {
+                    gGblPara.m_audio.m_nBevisGrade=2;
+                }else if(bevisGrade=="3")
+                {
+                    gGblPara.m_audio.m_nBevisGrade=3;
+                }else if(bevisGrade=="4")
+                {
+                    gGblPara.m_audio.m_nBevisGrade=4;
+                }else if(bevisGrade=="query")
+                {
+                    //仅用于查询当前状态.
+                }
+                switch(gGblPara.m_audio.m_nBevisGrade)
+                {
+                case 1:
+                    jsonObjFeedBack.insert("BevisGrade","1");
+                    break;
+                case 2:
+                    jsonObjFeedBack.insert("BevisGrade","2");
+                    break;
+                case 3:
+                    jsonObjFeedBack.insert("BevisGrade","3");
+                    break;
+                case 4:
+                    jsonObjFeedBack.insert("BevisGrade","4");
+                    break;
+                default:
+                    break;
+                }
             }
         }
+        if(jsonObj.contains("DGain"))
+        {
+            QJsonValue val=jsonObj.take("DGain");
+            if(val.isString())
+            {
+                qint32 dGain=val.toVariant().toInt();
+                qDebug()<<"bevisGrade:"<<dGain;
+                gGblPara.m_audio.m_nGaindB=dGain;
+                jsonObjFeedBack.insert("DGain",QString::number(gGblPara.m_audio.m_nGaindB));
+            }
+        }
+        if(jsonObj.contains("FlushUI"))
+        {
+            QJsonValue val=jsonObj.take("FlushUI");
+            if(val.isString())
+            {
+                QString flushUI=val.toVariant().toString();
+                if(flushUI=="on")
+                {
+                    gGblPara.m_bJsonFlushUIWav=true;
+                    gGblPara.m_bJsonFlushUIImg=true;
+
+                }else if(flushUI=="off")
+                {
+                    gGblPara.m_bJsonFlushUIWav=false;
+                    gGblPara.m_bJsonFlushUIImg=false;
+                }else if(flushUI=="query")
+                {
+                    //仅用于查询当前状态.
+                }
+                if(gGblPara.m_bJsonFlushUIWav && gGblPara.m_bJsonFlushUIImg)
+                {
+                    jsonObjFeedBack.insert("FlushUI","on");
+                }else{
+                    jsonObjFeedBack.insert("FlushUI","off");
+                }
+            }
+        }
+    }else{
+        qDebug()<<"<Error>:CtlThread,failed to parse json.";
     }
+    QJsonDocument jsonDocFeedBack;
+    jsonDocFeedBack.setObject(jsonObjFeedBack);
+    QByteArray baFeedBack=jsonDocFeedBack.toJson();
+    return baFeedBack;
 }

@@ -10,34 +10,19 @@ ZImgProcessThread::ZImgProcessThread()
 {
     this->m_uart=NULL;
     this->m_timerProcess=NULL;
-    this->m_bRunning=false;
+    this->m_bExitFlag=false;
 
     this->m_rbMain=NULL;
     this->m_rbAux=NULL;
-
-    this->m_queueProcessedSet=NULL;
-    this->m_semaProcessedSetUsed=NULL;
-    this->m_semaProcessedSetFree=NULL;
 }
 ZImgProcessThread::~ZImgProcessThread()
 {
 
 }
-qint32 ZImgProcessThread::ZBindMainQueue(ZRingBuffer *rbMain)
+qint32 ZImgProcessThread::ZBindMainAuxImgQueue(ZRingBuffer *rbMain,ZRingBuffer *rbAux)
 {
     this->m_rbMain=rbMain;
-    return 0;
-}
-qint32 ZImgProcessThread::ZBindAuxQueue(ZRingBuffer *rbAux)
-{
     this->m_rbAux=rbAux;
-    return 0;
-}
-qint32 ZImgProcessThread::ZBindProcessedSetQueue(QQueue<ZImgProcessedSet> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
-{
-    this->m_queueProcessedSet=queue;
-    this->m_semaProcessedSetUsed=semaUsed;
-    this->m_semaProcessedSetFree=semaFree;
     return 0;
 }
 qint32 ZImgProcessThread::ZStartThread()
@@ -48,13 +33,13 @@ qint32 ZImgProcessThread::ZStartThread()
         qDebug()<<"<error>:no bind main/aux queue,cannot start.";
         return -1;
     }
-
+    this->m_bExitFlag=false;
     this->start();
     return 0;
 }
 qint32 ZImgProcessThread::ZStopThread()
 {
-    this->exit(0);
+    this->m_bExitFlag=true;
     return 0;
 }
 bool ZImgProcessThread::ZIsRunning()
@@ -109,7 +94,7 @@ void ZImgProcessThread::run()
     char *pRGBBufMain=new char[nBufSize];
     char *pRGBBufAux=new char[nBufSize];
     qDebug()<<"<MainLoop>:ImgProcessThread starts.";
-    while(!gGblPara.m_bGblRst2Exit)
+    while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
     {
         //1.fetch QImage from main queue.
         this->m_rbMain->m_semaUsed->acquire();//已用信号量减1.
@@ -691,69 +676,28 @@ void ZImgProcessThread::ZDoTemplateMatchResize(const cv::Mat &mat1,const cv::Mat
     cv::minMaxLoc(matResult,&fMinVal,&fMaxVal,&ptMinLoc,&ptMaxLoc,cv::Mat());
     ptMatched=ptMinLoc;//标准平方差匹配，数据越小匹配度越好
 
-    qint32 nDiffX,nDiffY;
-#if 0
-    if(nCutX>ptMatched.x)
-    {
-        nDiffX=nCutX-ptMatched.x;
-    }else if(nCutX<ptMatched.x)
-    {
-        nDiffX=-(ptMatched.x-nCutX);
-    }else{
-        nDiffX=0;
-    }
-    if(nCutY>ptMatched.y)
-    {
-        nDiffY=nCutY-ptMatched.y;
-    }else if(nCutY<ptMatched.y)
-    {
-        nDiffY=-(ptMatched.y-nCutY);
-    }else{
-        nDiffY=0;
-    }
-#endif
-#if 0
-    if(gGblPara.m_calibrateX2>ptMatched.x)
-    {
-        nDiffX=gGblPara.m_calibrateX2-ptMatched.x;
-    }else if(gGblPara.m_calibrateX2<ptMatched.x)
-    {
-        nDiffX=-(ptMatched.x-gGblPara.m_calibrateX2);
-    }else{
-        nDiffX=0;
-    }
-    if(gGblPara.m_calibrateY2>ptMatched.y)
-    {
-        nDiffY=gGblPara.m_calibrateY2-ptMatched.y;
-    }else if(gGblPara.m_calibrateY2<ptMatched.y)
-    {
-        nDiffY=-(ptMatched.y-gGblPara.m_calibrateY2);
-    }else{
-        nDiffY=0;
-    }
-#endif
     nEndMS=QDateTime::currentDateTime().toMSecsSinceEpoch();
 
     //prepare to send template rectangle & matched rectangle to PC.
     QRect rectTemp(rectTemplate.x*2,rectTemplate.y*2,rectTemplate.width*2,rectTemplate.height*2);
     QRect rectMatch(ptMatched.x*2,ptMatched.y*2,rectTemplate.width*2,rectTemplate.height*2);
 
-    nDiffX=gGblPara.m_calibrateX2/2-(ptMatched.x+rectTemplate.width/2);
-    nDiffY=gGblPara.m_calibrateY2/2-(ptMatched.y+rectTemplate.height/2);
+
+    qint32 nDiffX=gGblPara.m_calibrateX2/2-(ptMatched.x+rectTemplate.width/2);
+    qint32 nDiffY=gGblPara.m_calibrateY2/2-(ptMatched.y+rectTemplate.height/2);
     //emit this->ZSigDiffXYT(rectTemp,rectMatch,nDiffX*2,nDiffY*2,nEndMS-nStartMS);
     //将计算结果投入processedSet队列中.
-    ZImgProcessedSet newProcessedSet;
-    newProcessedSet.rectTemplate=rectTemp;
-    newProcessedSet.rectMatched=rectMatch;
-    newProcessedSet.nDiffX=nDiffX*2;
-    newProcessedSet.nDiffY=nDiffY*2;
-    newProcessedSet.nCostMs=nEndMS-nStartMS;
-    this->m_semaProcessedSetFree->acquire();//空闲信号量减1.
-    this->m_queueProcessedSet->enqueue(newProcessedSet);
-    this->m_semaProcessedSetUsed->release();//已用信号量加1.
-    emit this->ZSigNewProcessSetArrived();
+    ZImgProcessedSet imgProSet;
+    imgProSet.rectTemplate=rectTemp;
+    imgProSet.rectMatched=rectMatch;
+    imgProSet.nDiffX=nDiffX*2;
+    imgProSet.nDiffY=nDiffY*2;
+    imgProSet.nCostMs=nEndMS-nStartMS;
+//    this->m_semaProcessedSetFree->acquire();//空闲信号量减1.
+//    this->m_queueProcessedSet->enqueue(newProcessedSet);
+//    this->m_semaProcessedSetUsed->release();//已用信号量加1.
+    emit this->ZSigNewProcessSetArrived(imgProSet);
 
-    //qDebug()<<"put processed set.";
     //dump diff x&y to tty UART.
     if(gGblPara.m_bDumpUART)
     {

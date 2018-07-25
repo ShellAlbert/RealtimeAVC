@@ -12,7 +12,7 @@ class ZCAMDevice:public QObject
 {
     Q_OBJECT
 public:
-    ZCAMDevice(QString devName,qint32 nWidth,qint32 nHeight,qint32 nFps,QObject*parent=nullptr);
+    ZCAMDevice(QString devName,qint32 nWidth,qint32 nHeight,qint32 nFps,bool bMainCamera,QObject*parent=nullptr);
     ~ZCAMDevice();
 
     int ZOpenCAM();
@@ -25,11 +25,7 @@ public:
     int ZGetFrame(void **pBuffer,size_t *nLen);
     int ZUnGetFrame();
 
-    int ZGetImgWidth();
-    int ZGetImgHeight();
     int ZGetFrameRate();
-
-    QString ZGetCAMID();
 signals:
     void ZSigMsg(const QString &msg,const qint32 &type);
 private:
@@ -51,6 +47,8 @@ private:
     qint32 m_nPredefinedWidth;
     qint32 m_nPredefinedHeight;
     qint32 m_nPredefinedFps;
+private:
+    bool m_bMainCamera;
 };
 
 #endif // ZCAMDEVICE_H

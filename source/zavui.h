@@ -23,10 +23,6 @@ class ZAVUI : public QFrame
 public:
     ZAVUI(QWidget *parent=nullptr);
     ~ZAVUI();
-    qint32 ZBindMainDispQueue(ZRingBuffer *rbDispMain);
-    qint32 ZBindAuxDispQueue(ZRingBuffer *rbDispAux);
-    qint32 ZBindImgProcessedSet(QQueue<ZImgProcessedSet> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
-
     qint32 ZBindWaveFormQueueBefore(ZRingBuffer *rbWaveBefore);
     qint32 ZBindWaveFormQueueAfter(ZRingBuffer *rbWaveAfter);
 
@@ -35,19 +31,13 @@ private slots:
     void ZSlotSSIMImgSimilarity(qint32 nVal);
     void ZSlot1sTimeout();
 public slots:
-    void ZSlotFlushWaveBefore();
-    void ZSlotFlushWaveAfter();
-    void ZSlotFlushProcessedSet();
+    void ZSlotFlushWaveBefore(const QByteArray &baPCM);
+    void ZSlotFlushWaveAfter(const QByteArray &baPCM);
+    void ZSlotFlushProcessedSet(const ZImgProcessedSet &imgProSet);
 private:
     void ZUpdateMatchBar(QProgressBar *pBar,qint32 nVal);
 protected:
     void closeEvent(QCloseEvent *event);
-private:
-    //ImgProcessThread put data to this queue.
-    //Main UI get data from this queue.
-    QQueue<ZImgProcessedSet> *m_queueProcessedSet;
-    QSemaphore *m_semaProcessedSetUsed;
-    QSemaphore *m_semaProcessedSetFree;
 private:
     //像素坐标差值及算法消耗时间.
     QLabel *m_llDiffXY;
@@ -69,6 +59,9 @@ private:
     //disp0,progress bar,disp1.
     ZImgDisplayer *m_disp[2];
     QProgressBar *m_SSIMMatchBar;
+    //DGain progress Bar.
+    QProgressBar *m_barDGain;
+    qint32 m_nDGainShadow;
 
     QHBoxLayout *m_hLayout;
     QVBoxLayout *m_vLayout;

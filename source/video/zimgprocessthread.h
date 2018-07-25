@@ -26,17 +26,17 @@ class ZImgProcessThread : public QThread
 public:
     ZImgProcessThread();
     ~ZImgProcessThread();
-    qint32 ZBindMainQueue(ZRingBuffer *rbMain);
-    qint32 ZBindAuxQueue(ZRingBuffer *rbAux);
-    qint32 ZBindProcessedSetQueue(QQueue<ZImgProcessedSet> *queue,QSemaphore *semaUsed,QSemaphore *semaFree);
+    qint32 ZBindMainAuxImgQueue(ZRingBuffer *rbMain,ZRingBuffer *rbAux);
     qint32 ZStartThread();
     qint32 ZStopThread();
     bool ZIsRunning();
 protected:
     void run();
 signals:
-    void ZSigNewProcessSetArrived();
+    void ZSigNewProcessSetArrived(const ZImgProcessedSet &imgProSet);
+    void ZSigSSIMImgSimilarity(qint32 nVal);
 
+    ///////////////////////////////////////////////////
     void ZSigThreadFinished();
     void ZSigMsg(const QString &msg,const qint32 &type);
     void ZSigImgGlobal(QImage img);
@@ -46,7 +46,7 @@ signals:
     void ZSigMatchedRect(QRect rect);
 
     void ZSigDiffXYT(QRect rectTemp,QRect rectMatched,qint32 nDiffX,qint32 nDiffY,qint32 nCostMs);
-    void ZSigSSIMImgSimilarity(qint32 nVal);
+
     void ZSigObjFeatureKeyPoints(QImage img);
     void ZSigSceneFeatureKeyPoints(QImage img);
 public slots:
@@ -89,7 +89,7 @@ private:
 private:
     ZHistogram *m_histogram;
 private:
-    bool m_bExit;
+    bool m_bExitFlag;
     QMutex m_mux1;
     QMutex m_mux2;
 private:
@@ -112,16 +112,11 @@ private:
     QTimer *m_timerProcess;
     bool m_bRunning;
 private:
-    QTimer *m_timerCtl;
-    QByteArray m_baUARTRecvBuf;
-
-private:
     ZRingBuffer *m_rbMain;
     ZRingBuffer *m_rbAux;
 private:
-    QQueue<ZImgProcessedSet> *m_queueProcessedSet;
-    QSemaphore *m_semaProcessedSetUsed;
-    QSemaphore *m_semaProcessedSetFree;
+    QTimer *m_timerCtl;
+    QByteArray m_baUARTRecvBuf;
 };
 
 #endif // ZIMGPROCESSTHREAD_H

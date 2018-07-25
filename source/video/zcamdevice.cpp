@@ -12,12 +12,14 @@
 #include <QFile>
 #include <QApplication>
 #include <QDateTime>
-ZCAMDevice::ZCAMDevice(QString devName,qint32 nWidth,qint32 nHeight,qint32 nFps,QObject*parent):QObject(parent)
+#include <sys/select.h>
+ZCAMDevice::ZCAMDevice(QString devName,qint32 nWidth,qint32 nHeight,qint32 nFps,bool bMainCamera,QObject*parent):QObject(parent)
 {
     this->m_devName=devName;
     this->m_nPredefinedWidth=nWidth;
     this->m_nPredefinedHeight=nHeight;
     this->m_nPredefinedFps=nFps;
+    this->m_bMainCamera=bMainCamera;
     ///////////////////
     this->m_fd=-1;
     this->m_nIndex=-1;
@@ -46,23 +48,6 @@ int ZCAMDevice::ZCloseCAM()
     close(this->m_fd);
     return 0;
 }
-QString ZCAMDevice::ZGetCAMID()
-{
-    struct v4l2_capability cap;
-    QString id;
-    if(this->ZOpenCAM()<0)
-    {
-        return id;
-    }
-    //query capability.
-    if(ioctl(this->m_fd,VIDIOC_QUERYCAP,&cap)<0)
-    {
-        return id;
-    }
-    id=QString((char*)cap.bus_info);
-    this->ZCloseCAM();
-    return id;
-}
 int ZCAMDevice::ZInitCAM()
 {
     struct v4l2_capability cap;
@@ -74,7 +59,7 @@ int ZCAMDevice::ZInitCAM()
 
     //  /dev/video2,here 5
     QFile fileCamInfo(QApplication::applicationDirPath()+"/"+this->m_devName.mid(5));
-    if(gGblPara.m_bDumpCamInfo2File)
+    if(1)
     {
         fileCamInfo.open(QIODevice::WriteOnly);
         fileCamInfo.write(QDateTime::currentDateTime().toString("yyyy/MM/dd hh:mm:ss").toLatin1()+"\n");
@@ -90,12 +75,19 @@ int ZCAMDevice::ZInitCAM()
     //emit this->ZSigMsg(tr("%1,%2,%3,%4").arg(this->m_devName).arg((char*)cap.driver).arg((char*)cap.card).arg((char*)cap.bus_info),Log_Msg_Info);
     //qDebug()<<"Driver:"<<(char*)cap.driver<<",Device:"<<(char*)cap.card<<",Bus info:"<<(char*)cap.bus_info;
     //qDebug()<<"Capabilities:"<<cap.capabilities;
-    if(gGblPara.m_bDumpCamInfo2File)
+    if(1)
     {
         fileCamInfo.write(QString((char*)cap.driver).toLocal8Bit()+"\n");
         fileCamInfo.write(QString((char*)cap.card).toLocal8Bit()+"\n");
         fileCamInfo.write(QString((char*)cap.bus_info).toLocal8Bit()+"\n");
     }
+    if(this->m_bMainCamera)
+    {
+        gGblPara.m_video.m_Cam1ID=QString((char*)cap.bus_info);
+    }else{
+        gGblPara.m_video.m_Cam2ID=QString((char*)cap.bus_info);
+    }
+
 
     if(!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE))
     {
@@ -133,7 +125,7 @@ int ZCAMDevice::ZInitCAM()
             while(ioctl(this->m_fd,VIDIOC_ENUM_FRAMEINTERVALS,&frmRateEnum)!=-1)
             {
                 //dump width*height,fps to file.
-                if(gGblPara.m_bDumpCamInfo2File)
+                if(1)
                 {
                     QString fmtInfo;
                     fmtInfo+=fmtName+",";
@@ -156,7 +148,7 @@ int ZCAMDevice::ZInitCAM()
         emit this->ZSigMsg("failed to get fmt!",Log_Msg_Error);
         return -1;
     }
-    if(gGblPara.m_bDumpCamInfo2File)
+    if(1)
     {
         QString fmtDefault;
         fmtDefault+=QString("Default setting format:\n");
@@ -185,7 +177,7 @@ int ZCAMDevice::ZInitCAM()
         emit this->ZSigMsg("failed to get stream param!",Log_Msg_Error);
         return -1;
     }
-    if(gGblPara.m_bDumpCamInfo2File)
+    if(1)
     {
         QString fpsDefault;
         fpsDefault+=QString("Default fps:%1/%2\n")///<
@@ -217,7 +209,7 @@ int ZCAMDevice::ZInitCAM()
         this->ZSigMsg("failed to set fps!",Log_Msg_Error);
         return -1;
     }
-    if(gGblPara.m_bDumpCamInfo2File)
+    if(1)
     {
         QString fmtDefault;
         fmtDefault+=QString("Reqeust to set %1*%2,%3 fps").arg(this->m_nPredefinedWidth).arg(this->m_nPredefinedHeight).arg(this->m_nPredefinedFps);
@@ -233,7 +225,7 @@ int ZCAMDevice::ZInitCAM()
         this->ZSigMsg("failed to get fmt!",Log_Msg_Error);
         return -1;
     }
-    if(gGblPara.m_bDumpCamInfo2File)
+    if(1)
     {
         QString fmtDefault;
         fmtDefault+=QString("Readback setting format:\n");
@@ -269,7 +261,7 @@ int ZCAMDevice::ZInitCAM()
         emit this->ZSigMsg("failed to get stream param!",Log_Msg_Error);
         return -1;
     }
-    if(gGblPara.m_bDumpCamInfo2File)
+    if(1)
     {
         QString fpsDefault;
         fpsDefault+=QString("Readback fps:%1/%2\n")///<
@@ -384,17 +376,37 @@ int ZCAMDevice::ZStopCapture()
 }
 int ZCAMDevice::ZGetFrame(void **pBuffer,size_t *nLen)
 {
-    struct v4l2_buffer getBuf;
-    memset(&getBuf,0,sizeof(getBuf));
-    getBuf.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    getBuf.memory=V4L2_MEMORY_MMAP;
-    if(ioctl(this->m_fd,VIDIOC_DQBUF,&getBuf)<0)
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(this->m_fd,&fds);
+    struct timeval tv;
+    tv.tv_sec=0;
+    tv.tv_usec=1000*100;//100ms.
+    int ret=select(this->m_fd+1,&fds,NULL,NULL,&tv);
+    if(ret<0)
     {
-        qDebug()<<"<error>:failed to DQBUF";
+        qDebug()<<"<error>:select() cam device error.";
         return -1;
+    }else if(0==ret){
+        qDebug()<<"<Warning>:select() timeout for cam device.";
+        return 0;
+    }else{
+        struct v4l2_buffer getBuf;
+        memset(&getBuf,0,sizeof(getBuf));
+        getBuf.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        getBuf.memory=V4L2_MEMORY_MMAP;
+        if(ioctl(this->m_fd,VIDIOC_DQBUF,&getBuf)<0)
+        {
+            qDebug()<<"<error>:failed to DQBUF";
+            return -1;
+        }
+        *pBuffer=this->m_IMGBuffer[getBuf.index].pStart;
+        *nLen=this->m_IMGBuffer[getBuf.index].nLength;
+        //remember the index.
+        this->m_nIndex=getBuf.index;
+        return 1;
     }
-    *pBuffer=this->m_IMGBuffer[getBuf.index].pStart;
-    *nLen=this->m_IMGBuffer[getBuf.index].nLength;
+
     //qDebug()<<"get frame len:"<<*nLen;
 #if 0
     //write img to file.
@@ -409,9 +421,7 @@ int ZCAMDevice::ZGetFrame(void **pBuffer,size_t *nLen)
     }
     m_nCapTotal++;
 #endif
-    //remember the index.
-    this->m_nIndex=getBuf.index;
-    return 0;
+
 }
 int ZCAMDevice::ZUnGetFrame()
 {
@@ -432,14 +442,7 @@ int ZCAMDevice::ZUnGetFrame()
     this->m_nIndex=-1;//reset it.
     return 0;
 }
-int ZCAMDevice::ZGetImgWidth()
-{
-    return this->m_nImgWidth;
-}
-int ZCAMDevice::ZGetImgHeight()
-{
-    return this->m_nImgHeight;
-}
+
 int ZCAMDevice::ZGetFrameRate()
 {
     return this->m_nFPS;

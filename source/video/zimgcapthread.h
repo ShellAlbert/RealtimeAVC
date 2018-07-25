@@ -17,23 +17,18 @@ public:
     explicit ZImgCapThread(QString devNodeName,qint32 nPreWidth,qint32 nPreHeight,qint32 nPreFps,bool bMainCamera=false);
     ~ZImgCapThread();
 
-    qint32 ZBindDispQueue(ZRingBuffer *rbDisp);
     qint32 ZBindProcessQueue(ZRingBuffer *rbProcess);
     qint32 ZBindYUVQueue(ZRingBuffer *rbYUV);
 
     qint32 ZStartThread();
     qint32 ZStopThread();
 
-    qint32 ZGetCAMImgWidth();
-    qint32 ZGetCAMImgHeight();
     qint32 ZGetCAMImgFps();
 
     QString ZGetDevName();
     bool ZIsRunning();
-
-    QString ZGetCAMID();
 signals:
-    void ZSigNewImgArrived();
+    void ZSigNewImgArrived(QImage img);
     void ZSigMsg(const QString &msg,const qint32 &type);
     void ZSigThreadFinished();
     void ZSigCAMIDFind(QString camID);
@@ -44,8 +39,6 @@ private:
     qint32 m_nPreWidth,m_nPreHeight,m_nPreFps;
     ZCAMDevice *m_cam;
 private:
-    //capture image to local display queue.
-    ZRingBuffer *m_rbDisp;
     //capture image to process queue.
     ZRingBuffer *m_rbProcess;
     //capture yuv to yuv queue.

@@ -10,7 +10,7 @@ ZAudioParam::ZAudioParam()
     this->m_bCutThreadExitFlag=false;//Noise Suppression thread.
     this->m_bPlayThreadExitFlag=false;//Local playback thread.
     this->m_bPCMEncThreadExitFlag=false;//Opus encode thread.
-    this->m_bTcpDumpThreadExitFlag=false;//Audio Tx Tcp thread.
+    this->m_bTcpTxThreadExitFlag=false;//Audio Tx Tcp thread.
 
     //run mode.
     //0:Only do capture and write pcm to wav file.
@@ -37,12 +37,13 @@ ZAudioParam::ZAudioParam()
     //同一时刻我们仅允许一个audio tcp客户端连接.
     this->m_bAudioTcpConnected=false;
 }
-
-ZGblPara gGblPara;
+ZVideoParam::ZVideoParam()
+{
+    this->m_bDoNotCmpCamId=false;
+}
 ZGblPara::ZGblPara()
 {
     this->m_bDebugMode=false;
-    this->m_bVerbose=false;
     this->m_bDumpCamInfo2File=false;
     this->m_bCaptureLog=false;
     this->m_bTransfer2PC=false;
@@ -62,6 +63,7 @@ ZGblPara::ZGblPara()
     this->m_bTcp2UartThreadExitFlag=false;
 
     this->m_bVideoTcpConnected=false;
+    this->m_bVideoTcpConnected2=false;
     this->m_bTcp2UartConnected=false;
     this->m_nTcp2UartBytes=0;
     this->m_nUart2TcpBytes=0;
@@ -72,34 +74,28 @@ ZGblPara::ZGblPara()
     this->m_bCtlClientConnected=false;
 
     //json control flags.
-    this->m_bJsonImgPro=true;
-    this->m_bJsonFlushUI=true;
+    this->m_bJsonImgPro=false;
+    this->m_bJsonFlushUIImg=true;
+    this->m_bJsonFlushUIWav=true;
 }
 ZGblPara::~ZGblPara()
 {
 }
 qint32 ZGblPara::writePid2File()
 {
-    //write pid file.
-    pid_t pidMy=getpid();
-    char buffer[32];
-    sprintf(buffer,"%d",pidMy);
+    //write pid to file.
     QFile filePID("/tmp/AVLizard.pid");
-    if(filePID.open(QIODevice::WriteOnly))
+    if(!filePID.open(QIODevice::WriteOnly))
     {
-        filePID.write(buffer,sizeof(buffer));
-        filePID.close();
-    }else{
-        if(this->m_bVerbose)
-        {
-            qDebug()<<"<error>:failed to write /tmp/AVLizard.pid!";
-        }
+        qDebug()<<"<error>:error to write pid file."<<filePID.errorString();
         return -1;
     }
-    if(this->m_bVerbose)
-    {
-        qDebug()<<"<info>:/tmp/AVLizard.pid generated.";
-    }
+    char pidBuffer[32];
+    memset(pidBuffer,0,sizeof(pidBuffer));
+    sprintf(pidBuffer,"%d",getpid());
+    filePID.write(pidBuffer,strlen(pidBuffer));
+    filePID.close();
+    qDebug()<<"write pid to /tmp/AVLizard.pid,"<<getpid()<<".";
     return 0;
 }
 void ZGblPara::readCfgFile()
@@ -112,7 +108,7 @@ void ZGblPara::readCfgFile()
     gGblPara.m_fpsCAM1=iniFile.value("fps",0).toInt();
     gGblPara.m_calibrateX1=iniFile.value("x1",0).toInt();
     gGblPara.m_calibrateY1=iniFile.value("y1",0).toInt();
-    gGblPara.m_idCAM1=iniFile.value("id","cam1").toString();
+    gGblPara.m_video.m_Cam1ID=iniFile.value("id","cam1").toString();
     iniFile.endGroup();
     iniFile.beginGroup("CAM2");
     gGblPara.m_widthCAM2=iniFile.value("width",0).toInt();
@@ -120,7 +116,7 @@ void ZGblPara::readCfgFile()
     gGblPara.m_fpsCAM2=iniFile.value("fps",0).toInt();
     gGblPara.m_calibrateX2=iniFile.value("x2",0).toInt();
     gGblPara.m_calibrateY2=iniFile.value("y2",0).toInt();
-    gGblPara.m_idCAM2=iniFile.value("id","cam2").toString();
+    gGblPara.m_video.m_Cam2ID=iniFile.value("id","cam2").toString();
     iniFile.endGroup();
     iniFile.beginGroup("CuteTemplate");
     gGblPara.m_nCutTemplateWidth=iniFile.value("width",0).toInt();
@@ -138,7 +134,8 @@ void ZGblPara::readCfgFile()
     this->m_audio.m_playCardName=iniFile.value("Name","plughw:CARD=USB20,DEV=1").toString();
     iniFile.endGroup();
 
-    if(this->m_bVerbose)
+#if 0
+    if(1)
     {
         qDebug()<<"CAM1 parameters:";
         qDebug()<<"resolution:"<<gGblPara.m_widthCAM1<<"*"<<gGblPara.m_heightCAM1<<",fps:"<<gGblPara.m_fpsCAM1;
@@ -149,6 +146,7 @@ void ZGblPara::readCfgFile()
         qDebug()<<"calibrate center point ("<<gGblPara.m_calibrateX2<<","<<gGblPara.m_calibrateY2<<")";
         qDebug()<<"Cut Template size: ("<<gGblPara.m_nCutTemplateWidth<<"*"<<gGblPara.m_nCutTemplateHeight<<")";
     }
+#endif
 }
 void ZGblPara::writeCfgFile()
 {
@@ -243,7 +241,9 @@ void ZGblPara::int32_char8x2_low(qint32 int32,char *char8x2)
         char8x2[1]|=0x80;
     }
 }
+ZGblPara gGblPara;
 
+/////////////////////////////////////////////////
 cv::Mat QImage2cvMat(const QImage &img)
 {
     cv::Mat mat;
@@ -301,10 +301,7 @@ QImage cvMat2QImage(const cv::Mat &mat)
         QImage img(pSrc,mat.cols,mat.rows,mat.step,QImage::Format_ARGB32);
         return img.copy();
     }else{
-        if(gGblPara.m_bVerbose)
-        {
-            qDebug()<<"failed to convert cv::Mat to QImage!";
-        }
+        qDebug()<<"<Error>:failed to convert cvMat to QImage!";
         return QImage();
     }
 }

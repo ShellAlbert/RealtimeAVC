@@ -9,8 +9,12 @@
 #include <audio/zaudiotask.h>
 #include <video/zvideotask.h>
 #include <forward/ztcp2uartforwardthread.h>
+#include <ctl/zctlthread.h>
 #include <zavui.h>
 #include <zringbuffer.h>
+#include <QMetaType>
+Q_DECLARE_METATYPE(ZImgProcessedSet)
+
 void gSIGHandler(int sigNo)
 {
     switch(sigNo)
@@ -28,40 +32,16 @@ void gSIGHandler(int sigNo)
 //AppName: AVLizard
 //capture audio with ALSA,encode with opus.
 //capture video with V4L2,encode with h264.
-
 int main(int argc,char **argv)
 {
-#if 0
-    ZRingBuffer  ringBuf(5,10);
-    char buffer[10];
-    int i=0;
-    while(1)
-    {
-        if(!ringBuf.m_semaFree->tryAcquire())
-        {
-            qDebug()<<"ringbuf is full.";
-            break;
-        }
-        sprintf(buffer,"test%d",i++);
-        ringBuf.ZPutElement((qint8*)buffer,strlen(buffer));
-        qDebug()<<"put:"<<QString(buffer);
-        ringBuf.m_semaUsed->release();
-    }
-    while(1)
-    {
-        if(!ringBuf.m_semaUsed->tryAcquire())
-        {
-            qDebug()<<"ring buffer is empty.";
-            break;
-        }
-        ringBuf.ZGetElement((qint8*)buffer,sizeof(buffer));
-        qDebug()<<"get:"<<QString(buffer);
-        ringBuf.m_semaFree->release();
-    }
-    return 0;
-#endif
+    //运行时先使用--DoNotCmpCamId来跳开USB CamId比对代码
+    //这样就会在运行目录下生成cam info文件，从里面找出usb bus info信息
+    //将这个bus info字符串复制到AVLizard.ini的id中，用于区别主从摄像头
+    //usb-fe3c0000.usb-1
+    //usb-fe380000.usb-1
+
+    qRegisterMetaType<ZImgProcessedSet>("ZImgProcessedSet");
     QApplication app(argc,argv);
-    ///////////////////////////////////////////////////////
     //parse audio command line arguments.
     QCommandLineOption opMode("mode","0:capture to file,1:realtime process,default is 1.","runMode","1");
     QCommandLineOption opInRate("inRate","specified the capture input sample rate,default is 48000.","inRate","48000");
@@ -72,7 +52,7 @@ int main(int argc,char **argv)
     QCommandLineOption opBevisGrade("grade","Bevis:noise reduction grade,range:1~4,default is 1.","grade","1");
     //parse video command line arguments.
     QCommandLineOption opDebug("debug","enable debug mode,output more messages.");
-    QCommandLineOption opVerbose("verbose","enable verbose mode.");
+    QCommandLineOption opDoNotCmpCamId("DoNotCmpCamId","do not compare camera IDs,used to get cam info at first time run.");
     QCommandLineOption opDumpCamInfo("camInfo","dump camera parameters to file then exit.");
     QCommandLineOption opCapture("capLog","print capture logs.");
     QCommandLineOption opTransfer("tx2PC","enable transfer h264 stream to PC.");
@@ -93,7 +73,7 @@ int main(int argc,char **argv)
     cmdLineParser.addOption(opBevisGrade);
     //video.
     cmdLineParser.addOption(opDebug);
-    cmdLineParser.addOption(opVerbose);
+    cmdLineParser.addOption(opDoNotCmpCamId);
     cmdLineParser.addOption(opDumpCamInfo);
     cmdLineParser.addOption(opCapture);
     cmdLineParser.addOption(opTransfer);
@@ -145,9 +125,9 @@ int main(int argc,char **argv)
     {
         gGblPara.m_bDebugMode=true;
     }
-    if(cmdLineParser.isSet(opVerbose))
+    if(cmdLineParser.isSet(opDoNotCmpCamId))
     {
-        gGblPara.m_bVerbose=true;
+        gGblPara.m_video.m_bDoNotCmpCamId=true;
     }
     if(cmdLineParser.isSet(opDumpCamInfo))
     {
@@ -184,12 +164,6 @@ int main(int argc,char **argv)
         gGblPara.m_bXMode=false;
     }
 
-    //write pid to file.
-    if(gGblPara.writePid2File()<0)
-    {
-        return -1;
-    }
-
     //read config file.
     QFile fileIni("AVLizard.ini");
     if(!fileIni.exists())
@@ -201,6 +175,14 @@ int main(int argc,char **argv)
         return 0;
     }
     gGblPara.readCfgFile();
+
+    //这里我们确保设置的2个摄像头的分辨率必须一致！
+    if((gGblPara.m_widthCAM1 != gGblPara.m_widthCAM2) ||(gGblPara.m_heightCAM1!=gGblPara.m_heightCAM2))
+    {
+        qDebug()<<"<Error>:the resolution of two cameras are not same.";
+        qDebug()<<"<Error>: CAM1("<<gGblPara.m_widthCAM1<<"*"<<gGblPara.m_heightCAM1<<") CAM2("<<gGblPara.m_widthCAM2<<"*"<<gGblPara.m_heightCAM2<<")";
+        return -1;
+    }
 
     ////////////////////////////////////////////////////////
     qDebug()<<"AVLizard Version:"<<APP_VERSION<<" Build on"<<__DATE__<<" "<<__TIME__;
@@ -246,102 +228,71 @@ int main(int argc,char **argv)
         qDebug()<<"FMode Enabled.";
     }
 
+    //write pid to file.
+    if(gGblPara.writePid2File()<0)
+    {
+        return -1;
+    }
+
     //install signal handler.
     //Set the signal callback for Ctrl-C
     signal(SIGINT,gSIGHandler);
 
-    //write pid to file.
-    QFile filePID("/tmp/AVLizard.pid");
-    if(!filePID.open(QIODevice::WriteOnly))
-    {
-        qDebug()<<"<error>:error to write pid file."<<filePID.errorString();
-        return -1;
-    }
-    char pidBuffer[32];
-    memset(pidBuffer,0,sizeof(pidBuffer));
-    sprintf(pidBuffer,"%d",getpid());
-    filePID.write(pidBuffer,strlen(pidBuffer));
-    filePID.close();
-    qDebug()<<"write pid to /tmp/AVLizard.pid,"<<getpid()<<".";
-
-    //Main CaptureThread put QImage to this queue.
-    //Main View Display UI get QImage from this queue for local display.
-    ZRingBuffer *rbDispMain=new ZRingBuffer(30,640*480*3*2);
-
-    //Aux CaptureThread put QImage to this queue.
-    //Aux View Display UI get QImage from this queue for local display.
-    ZRingBuffer *rbDispAux=new ZRingBuffer(30,640*480*3*2);
-
-    //queue for connect VideoTask/ImgProcessThread and AVUI/LocalDisplay.
-    QQueue<ZImgProcessedSet> *queueProcessedSet=new QQueue<ZImgProcessedSet>;
-    QSemaphore *semaProcessedSetUsed=new QSemaphore(0);
-    QSemaphore *semaProcessedSetFree=new QSemaphore(30);
-
-    //本地音频波形绘制队列,采集的原始波形.
-    ZRingBuffer *rbWaveBefore=new ZRingBuffer(30,BLOCK_SIZE);
-    //经过降噪算法处理过的数据波形.
-    ZRingBuffer *rbWaveAfter=new ZRingBuffer(30,BLOCK_SIZE);
-
-
     //start Android(tcp) <--> STM32(uart) forward task.
-    ZTcp2UartForwardThread tcp2UartForward;
-    tcp2UartForward.ZStartThread();
+    ZTcp2UartForwardThread *tcp2UartForward=new ZTcp2UartForwardThread;
+    tcp2UartForward->ZStartThread();
+
+    //ctl thread for Video/Audio.
+    ZCtlThread *ctlThread=new ZCtlThread;
+    ctlThread->ZStartThread();
 
     //audio task.
-    ZAudioTask taskAudio;
-    taskAudio.ZBindWaveFormQueueBefore(rbWaveBefore);
-    taskAudio.ZBindWaveFormQueueAfter(rbWaveAfter);
-    if(taskAudio.ZStartTask()<0)
+    ZAudioTask *taskAudio=new ZAudioTask;
+    if(taskAudio->ZStartTask()<0)
     {
-        if(gGblPara.m_bVerbose)
-        {
-            qDebug()<<"<error>:failed to start audio task.";
-        }
+        qDebug()<<"<Error>:failed to start audio task.";
         return -1;
     }
 
     //video task.
-    ZVideoTask taskVideo;
-    taskVideo.ZBindMainDispQueue(rbDispMain);
-    taskVideo.ZBindAuxDispQueue(rbDispAux);
-    taskVideo.ZBindImgProcessedSet(queueProcessedSet,semaProcessedSetUsed,semaProcessedSetFree);
-    if(taskVideo.ZDoInit()<0)
+    ZVideoTask *taskVideo=new ZVideoTask;
+    if(taskVideo->ZDoInit()<0)
     {
-        qDebug()<<"<error>:failed to init video task.";
+        qDebug()<<"<Error>:failed to init video task.";
         return -1;
     }
-    if(taskVideo.ZStartTask()<0)
+    if(taskVideo->ZStartTask()<0)
     {
-        if(gGblPara.m_bVerbose)
-        {
-            qDebug()<<"<error>:failed to start video task!";
-        }
+        qDebug()<<"<Error>:failed to start video task!";
         return -1;
     }
 
     //AV UI.
-    ZAVUI avUI;
-    avUI.ZBindMainDispQueue(rbDispMain);
-    avUI.ZBindAuxDispQueue(rbDispAux);
-    avUI.ZBindImgProcessedSet(queueProcessedSet,semaProcessedSetUsed,semaProcessedSetFree);
-    avUI.ZBindWaveFormQueueBefore(rbWaveBefore);
-    avUI.ZBindWaveFormQueueAfter(rbWaveAfter);
+    ZAVUI *avUI=new ZAVUI;
 
     //use signal-slot event to notify local UI flush.
-    QObject::connect(taskVideo.ZGetImgCapThread(0),SIGNAL(ZSigNewImgArrived()),avUI.ZGetImgDisp(0),SLOT(ZSlotFetchNewImg()),Qt::AutoConnection);
-    QObject::connect(taskVideo.ZGetImgCapThread(1),SIGNAL(ZSigNewImgArrived()),avUI.ZGetImgDisp(1),SLOT(ZSlotFetchNewImg()),Qt::AutoConnection);
-    //use signal-slot event to notify UI to flush new image process set.
-    QObject::connect(taskVideo.ZGetImgProcessThread(),SIGNAL(ZSigNewProcessSetArrived()),&avUI,SLOT(ZSlotFlushProcessedSet()),Qt::AutoConnection);
-    //use signal-slot event to flush wave form.
-    QObject::connect(taskAudio.ZGetNoiseCutThread(),SIGNAL(ZSigNewWaveBeforeArrived()),&avUI,SLOT(ZSlotFlushWaveBefore()),Qt::AutoConnection);
-    QObject::connect(taskAudio.ZGetNoiseCutThread(),SIGNAL(ZSigNewWaveAfterArrived()),&avUI,SLOT(ZSlotFlushWaveAfter()),Qt::AutoConnection);
+    QObject::connect(taskVideo->ZGetImgCapThread(0),SIGNAL(ZSigNewImgArrived(QImage)),avUI->ZGetImgDisp(0),SLOT(ZSlotFlushImg(QImage)),Qt::AutoConnection);
+    QObject::connect(taskVideo->ZGetImgCapThread(1),SIGNAL(ZSigNewImgArrived(QImage)),avUI->ZGetImgDisp(1),SLOT(ZSlotFlushImg(QImage)),Qt::AutoConnection);
 
-    avUI.showMaximized();
+    //use signal-slot event to notify UI to flush new image process set.
+    QObject::connect(taskVideo->ZGetImgProcessThread(),SIGNAL(ZSigNewProcessSetArrived(ZImgProcessedSet)),avUI,SLOT(ZSlotFlushProcessedSet(ZImgProcessedSet)),Qt::AutoConnection);
+    QObject::connect(taskVideo->ZGetImgProcessThread(),SIGNAL(ZSigSSIMImgSimilarity(qint32)),avUI,SLOT(ZSlotSSIMImgSimilarity(qint32)),Qt::AutoConnection);
+
+    //use signal-slot event to flush wave form.
+    QObject::connect(taskAudio->ZGetNoiseCutThread(),SIGNAL(ZSigNewWaveBeforeArrived(QByteArray)),avUI,SLOT(ZSlotFlushWaveBefore(QByteArray)),Qt::AutoConnection);
+    QObject::connect(taskAudio->ZGetNoiseCutThread(),SIGNAL(ZSigNewWaveAfterArrived(QByteArray)),avUI,SLOT(ZSlotFlushWaveAfter(QByteArray)),Qt::AutoConnection);
+
+    avUI->showMaximized();
+
     //enter event-loop.
     int ret=app.exec();
 
-    delete rbDispMain;
-    delete rbDispAux;
+    //free memory.
+    delete avUI;
+    delete taskAudio;
+    delete taskVideo;
+    delete tcp2UartForward;
+    delete ctlThread;
 
     return ret;
 }

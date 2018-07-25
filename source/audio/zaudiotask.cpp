@@ -10,28 +10,18 @@ ZAudioTask::ZAudioTask(QObject *parent):QObject(parent)
 
     //noise queue.
     //capture thread -> noise cut thread.
-//    this->m_queueNoise=NULL;
-//    this->m_semaUsedNoise=NULL;
-//    this->m_semaFreeNoise=NULL;
     this->m_rbNoise=NULL;
 
     //clear queue.
     //noise cut thread -> play thread.
-//    this->m_queueClear=NULL;
-//    this->m_semaUsedClear=NULL;
-//    this->m_semaFreeClear=NULL;
     this->m_rbClear=NULL;
 
     //encode queue.
     //noise cut thread -> encode thread.
-//    this->m_queueEncode=NULL;
-//    this->m_semaUsedEncode=NULL;
-//    this->m_semaFreeEncode=NULL;
     this->m_rbEncode=NULL;
 
-//    this->m_queueTCP=NULL;
-//    this->m_semaUsedTCP=NULL;
-//    this->m_semaFreeTCP=NULL;
+    //tx queue.
+    //h264 encode thread -> tcp tx thread.
     this->m_rbTx=NULL;
 
     //capture-process-playback mode.
@@ -68,66 +58,7 @@ ZAudioTask::~ZAudioTask()
     {
         delete this->m_txThread;
     }
-
-#if 0
-    //noise queue.
-    if(this->m_queueNoise!=NULL)
-    {
-        delete this->m_queueNoise;
-    }
-    if(this->m_semaUsedNoise!=NULL)
-    {
-        delete this->m_semaUsedNoise;
-    }
-    if(this->m_semaFreeNoise!=NULL)
-    {
-        delete this->m_semaFreeNoise;
-    }
-
-    //clear queue.
-    if(this->m_queueClear!=NULL)
-    {
-        delete this->m_queueClear;
-    }
-    if(this->m_semaUsedClear!=NULL)
-    {
-        delete this->m_semaUsedClear;
-    }
-    if(this->m_semaFreeClear!=NULL)
-    {
-        delete this->m_semaFreeClear;
-    }
-
-
-    //encode queue.
-    if(this->m_queueEncode!=NULL)
-    {
-        this->m_queueEncode=NULL;
-    }
-    if(this->m_semaUsedEncode!=NULL)
-    {
-        delete this->m_semaUsedEncode;
-    }
-    if(this->m_semaFreeEncode!=NULL)
-    {
-        delete this->m_semaFreeEncode;
-    }
-#endif
 }
-//qint32 ZAudioTask::ZBindWaveFormQueueBefore(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
-//{
-//    this->m_queueWavBefore=queue;
-//    this->m_semaUsedWavBefore=semaUsed;
-//    this->m_semaFreeWavBefore=semaFree;
-//    return 0;
-//}
-//qint32 ZAudioTask::ZBindWaveFormQueueAfter(QQueue<QByteArray> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
-//{
-//    this->m_queueWavAfter=queue;
-//    this->m_semaUsedWavAfter=semaUsed;
-//    this->m_semaFreeWavAfter=semaFree;
-//    return 0;
-//}
 qint32 ZAudioTask::ZBindWaveFormQueueBefore(ZRingBuffer *rbWave)
 {
     this->m_rbWaveBefore=rbWave;
@@ -146,28 +77,18 @@ qint32 ZAudioTask::ZStartTask()
 
     //noise queue.
     //capture thread -> noise cut thread.
-//    this->m_queueNoise=new QQueue<QByteArray>;
-//    this->m_semaUsedNoise=new QSemaphore(0);
-//    this->m_semaFreeNoise=new QSemaphore(30);
     this->m_rbNoise=new ZRingBuffer(30,BLOCK_SIZE);
 
     //clear queue.
     //noise cut thread -> play thread.
-//    this->m_queueClear=new QQueue<QByteArray>;
-//    this->m_semaUsedClear=new QSemaphore(0);
-//    this->m_semaFreeClear=new QSemaphore(30);
     this->m_rbClear=new ZRingBuffer(30,BLOCK_SIZE);
 
     //encode queue.
     //noise cut thread -> encode thread.
-//    this->m_queueEncode=new QQueue<QByteArray>;
-//    this->m_semaUsedEncode=new QSemaphore(0);
-//    this->m_semaFreeEncode=new QSemaphore(30);
     this->m_rbEncode=new ZRingBuffer(30,BLOCK_SIZE);
 
-//    this->m_queueTCP=new QQueue<QByteArray>;
-//    this->m_semaUsedTCP=new QSemaphore(0);
-//    this->m_semaFreeTCP=new QSemaphore(30);
+    //tx queue.
+    //h264 encode thread -> tcp tx thread.
     this->m_rbTx=new ZRingBuffer(30,BLOCK_SIZE);
 
     //CaptureThread -> queueNoise -> NoiseCutThread  -> queueEncode -> PcmEncThread -> queueTCP -> TcpDumpThread.
@@ -192,7 +113,7 @@ qint32 ZAudioTask::ZStartTask()
     this->m_pcmEncThread=new ZPCMEncThread;
     connect(this->m_pcmEncThread,SIGNAL(ZSigThreadFinished()),this,SLOT(ZSlotCheckExitFlag()));
 
-    //tcp dump thread.
+    //tcp tx thread.
     this->m_txThread=new ZAudioTxThread;
     QObject::connect(this->m_txThread,SIGNAL(ZSigThreadFinished()),this,SLOT(ZSlotCheckExitFlag()));
 
@@ -215,7 +136,7 @@ void ZAudioTask::ZSlotCheckExitFlag()
 
     if(gGblPara.m_audio.m_bCapThreadExitFlag && gGblPara.m_audio.m_bCutThreadExitFlag && ///<
             gGblPara.m_audio.m_bPlayThreadExitFlag && gGblPara.m_audio.m_bPCMEncThreadExitFlag && ///<
-            gGblPara.m_audio.m_bTcpDumpThreadExitFlag)
+            gGblPara.m_audio.m_bTcpTxThreadExitFlag)
     {
         this->m_capThread->quit();
         this->m_capThread->wait(1000);

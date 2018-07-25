@@ -58,6 +58,8 @@ qint32 ZAudioCaptureThread::ZUpdateWavHead2File()
     //大小为文件总长度减去44字节的WAV头
     lseek(this->m_fd,40,SEEK_SET);
     write(this->m_fd,&nPCMDataLen,sizeof(nPCMDataLen));
+
+    return 0;
 }
 qint32 ZAudioCaptureThread::ZStartThread(ZRingBuffer *rbNoise)
 {
@@ -116,7 +118,9 @@ void ZAudioCaptureThread::run()
         /* been completely processed by the soundcard.                */
         if (snd_pcm_open(&pcmHandle,(char*)gGblPara.m_audio.m_capCardName.toStdString().c_str(),SND_PCM_STREAM_CAPTURE,0)<0)
         {
-            qDebug()<<"<error>:CapThread,error to open pcm device "<<gGblPara.m_audio.m_capCardName;
+            qDebug()<<"<Error>:Audio CapThread,error to open pcm device "<<gGblPara.m_audio.m_capCardName;
+            //set global request to exit flag to cause other threads to exit.
+            gGblPara.m_bGblRst2Exit=true;
             return;
         }
 
@@ -130,7 +134,9 @@ void ZAudioCaptureThread::run()
         snd_pcm_hw_params_alloca(&hwparams);
         if(snd_pcm_hw_params_any(pcmHandle,hwparams)<0)
         {
-            qDebug()<<"<error>:CapThread,Cannot configure this PCM device.";
+            qDebug()<<"<error>:Audio CapThread,Cannot configure this PCM device.";
+            //set global request to exit flag to cause other threads to exit.
+            gGblPara.m_bGblRst2Exit=true;
             return;
         }
 
@@ -168,14 +174,18 @@ void ZAudioCaptureThread::run()
         /* of this introduction.                  */
         if(snd_pcm_hw_params_set_access(pcmHandle,hwparams,SND_PCM_ACCESS_RW_INTERLEAVED)<0)
         {
-            qDebug()<<"<error>:CapThread,error at snd_pcm_hw_params_set_access().";
+            qDebug()<<"<Error>:Audio CapThread,error at snd_pcm_hw_params_set_access().";
+            //set global request to exit flag to cause other threads to exit.
+            gGblPara.m_bGblRst2Exit=true;
             return;
         }
 
         /* Set sample format */
         if(snd_pcm_hw_params_set_format(pcmHandle,hwparams,SND_PCM_FORMAT_S16_LE)<0)
         {
-            qDebug()<<"<error>:CapThread,error at snd_pcm_hw_params_set_format().";
+            qDebug()<<"<Error>:Audio CapThread,error at snd_pcm_hw_params_set_format().";
+            //set global request to exit flag to cause other threads to exit.
+            gGblPara.m_bGblRst2Exit=true;
             return;
         }
 
@@ -184,38 +194,44 @@ void ZAudioCaptureThread::run()
         unsigned int nNearSampleRate=nSampleRate;
         if(snd_pcm_hw_params_set_rate_near(pcmHandle,hwparams,&nNearSampleRate,0u)<0)
         {
-            qDebug()<<"<error>:CapThread,error at snd_pcm_hw_params_set_rate_near().";
+            qDebug()<<"<Error>:Audio CapThread,error at snd_pcm_hw_params_set_rate_near().";
+            //set global request to exit flag to cause other threads to exit.
+            gGblPara.m_bGblRst2Exit=true;
             return;
         }
         if(nNearSampleRate!=nSampleRate)
         {
-            qDebug("CapThread,The rate %d Hz is not supported by your hardware.\nUsing %d Hz instead.\n",nSampleRate,nNearSampleRate);
+            qDebug()<<"<Warning>:Audio CapThread,the sampled rate "<<nSampleRate<<" Hz is not supported by hardware.";
+            qDebug()<<"<Warning>:Using "<<nNearSampleRate<<" Hz instead.";
         }
-        //qDebug("CapThread,Using %d Hz sampling rate.",nNearSampleRate);
 
         /* Set number of channels */
         if(snd_pcm_hw_params_set_channels(pcmHandle,hwparams,CHANNELS_NUM)<0)
         {
-            qDebug()<<"<error>:CapThread,error at snd_pcm_hw_params_set_channels().";
+            qDebug()<<"<Error>:CapThread,error at snd_pcm_hw_params_set_channels().";
+            //set global request to exit flag to cause other threads to exit.
+            gGblPara.m_bGblRst2Exit=true;
             return;
         }
 
         /* Set number of periods. Periods used to be called fragments. */
         /* Number of periods, See http://www.alsa-project.org/main/index.php/FramesPeriods */
         unsigned int periods=ALSA_PERIOD;
-        int request_periods;
+        unsigned int request_periods;
         int dir=0;
         request_periods=periods;
         //qDebug("Requesting period count of %d\n", request_periods);
         //	Restrict a configuration space to contain only one periods count
         if(snd_pcm_hw_params_set_periods_near(pcmHandle,hwparams,&periods,&dir)<0)
         {
-            qDebug("CapThread,Error setting periods.\n");
+            qDebug("<Error>:Audio CapThread,error at setting periods.\n");
+            //set global request to exit flag to cause other threads to exit.
+            gGblPara.m_bGblRst2Exit=true;
             return;
         }
         if(request_periods!=periods)
         {
-            qDebug("CapThread,Requested %d periods, recieved %d\n", request_periods, periods);
+            qDebug("<Warning>:Audio CapThread,requested %d periods,but recieved %d.\n", request_periods, periods);
         }
 
         /*
@@ -226,7 +242,9 @@ void ZAudioCaptureThread::run()
         */
         if(snd_pcm_hw_params_set_buffer_size_near(pcmHandle,hwparams,&pcmFrames)<0)
         {
-            qDebug()<<"<error>:CapThread,error at snd_pcm_hw_params_set_buffer_size_near().";
+            qDebug()<<"<Error>:CapThread,error at snd_pcm_hw_params_set_buffer_size_near().";
+            //set global request to exit flag to cause other threads to exit.
+            gGblPara.m_bGblRst2Exit=true;
             return;
         }
 
@@ -240,7 +258,9 @@ void ZAudioCaptureThread::run()
         /* Apply HW parameter settings to PCM device and prepare device*/
         if(snd_pcm_hw_params(pcmHandle,hwparams)<0)
         {
-            qDebug()<<"<error>:CapThread,error at snd_pcm_hw_params().";
+            qDebug()<<"<Error>:Audio CapThread,error at snd_pcm_hw_params().";
+            //set global request to exit flag to cause other threads to exit.
+            gGblPara.m_bGblRst2Exit=true;
             return;
         }
 
@@ -248,7 +268,7 @@ void ZAudioCaptureThread::run()
         inputBuffer=new char[pcmBlkSize];
         //the main-loop.
         qDebug()<<"<MainLoop>:CaptureThread starts.";
-        while(!gGblPara.m_bGblRst2Exit)
+        while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
         {
             // Read capture buffer from ALSA input device.
             while(snd_pcm_readi(pcmHandle,inputBuffer,pcmFrames)<0)
@@ -257,15 +277,23 @@ void ZAudioCaptureThread::run()
                 //qDebug( "<cap>:Buffer Overrun");
                 gGblPara.m_audio.m_nCapOverrun++;
             }
-            //put original pcm data into noise queue.
-            if(this->m_rbNoise->m_semaFree->tryAcquire())//空闲信号量减1.
-            {
-                this->m_rbNoise->ZPutElement((qint8*)inputBuffer,pcmBlkSize);
-                this->m_rbNoise->m_semaUsed->release();//已用信号量加1.
-            }else{
-                qDebug()<<"<Warning>:audio capture queue is full,trash new captured PCM.";
+            //try to put original pcm data into noise queue.
+            qint32 nTryTimes=0;
+            do{
+                if(this->m_rbNoise->m_semaFree->tryAcquire())//空闲信号量减1.
+                {
+                    this->m_rbNoise->ZPutElement((qint8*)inputBuffer,pcmBlkSize);
+                    this->m_rbNoise->m_semaUsed->release();//已用信号量加1.
+                    break;
+                }
+                if(nTryTimes++>10)
+                {
+                    qDebug()<<"<Error>:audio noise queue is full,trash this frame.";
+                    break;
+                }
+                qDebug()<<"<Warning>:audio noise queue is full,try times "<<nTryTimes<<".";
                 this->usleep(AUDIO_THREAD_SCHEDULE_US);
-            }
+            }while(1);
         }
     }while(0);
 
@@ -276,10 +304,10 @@ void ZAudioCaptureThread::run()
         The latter function will stop after pending frames have been played.
     */
     /* Stop PCM device and drop pending frames */
-    //    snd_pcm_drop(pcmHandle);
+    snd_pcm_drop(pcmHandle);
 
     /* Stop PCM device after pending frames have been played */
-    snd_pcm_drain(pcmHandle);
+    //snd_pcm_drain(pcmHandle);
 
     if(inputBuffer!=NULL)
     {
@@ -287,9 +315,10 @@ void ZAudioCaptureThread::run()
     }
 
     qDebug()<<"<MainLoop>:CaptureThread ends.";
-    //set flag to help other thread to exit.
+    //set global request to exit flag to help other thread to exit.
     gGblPara.m_bGblRst2Exit=true;
     emit this->ZSigThreadFinished();
+    return;
 }
 quint64 ZAudioCaptureThread::ZGetTimestamp()
 {

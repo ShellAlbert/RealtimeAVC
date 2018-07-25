@@ -16,8 +16,8 @@ public:
     qint32 ZStopThread();
 signals:
     void ZSigThreadFinished();
-    void ZSigNewWaveBeforeArrived();
-    void ZSigNewWaveAfterArrived();
+    void ZSigNewWaveBeforeArrived(const QByteArray &baPCM);
+    void ZSigNewWaveAfterArrived(const QByteArray &baPCM);
 protected:
     void run();
 private:

@@ -19,16 +19,14 @@ public:
     explicit ZImgDisplayer(qint32 nCenterX,qint32 nCenterY,bool bMainCamera=false,QWidget *parent = nullptr);
     ~ZImgDisplayer();
     void ZSetSensitiveRect(QRect rect);
-    void ZSetCAMParameters(qint32 nWidth,qint32 nHeight,qint32 nFps,QString camID);
     void ZSetPaintParameters(QColor colorRect);
-    void ZBindQueue(ZRingBuffer *rbDisp);
 protected:
     QSize sizeHint() const;
     void resizeEvent(QResizeEvent *event);
 signals:
 
 public slots:
-    void ZSlotFetchNewImg();
+    void ZSlotFlushImg(const QImage &img);
 protected:
     void paintEvent(QPaintEvent *e);
 
@@ -45,7 +43,7 @@ private:
     qint32 m_nCamWidth,m_nCamHeight,m_nCAMFps;
 
     //image counter.
-    qint64 m_nTriggerCounter;
+    qint64 m_nFrmCounter;
     //AM i the main camera?
     bool m_bMainCamera;
 
@@ -54,9 +52,6 @@ private:
 
     qint32 m_nRatio;
     bool m_bStretchFlag;
-    QQueue<QImage> *m_queue;
-    QSemaphore *m_semaUsed;
-    QSemaphore *m_semaFree;
 private:
     //motor move buttons.
     QToolButton *m_tbMotorCtl[4];
@@ -64,9 +59,10 @@ private:
     float m_fRatioWidth;
     float m_fRatioHeight;
     QVector<QLineF> m_vecCrossLines;
+
 private:
-    ZRingBuffer *m_rbDisp;
-    char *m_pRGBBuffer;
+    //calculate the fps.
+    qint64 m_nLastTs;
 };
 
 #endif // ZIMGDISPLAYER_H

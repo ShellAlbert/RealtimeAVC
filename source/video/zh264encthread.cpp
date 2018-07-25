@@ -37,7 +37,7 @@ qint32 ZH264EncThread::ZStartThread()
         qDebug()<<"<error>:no bind h264 queue,cannot start.";
         return -1;
     }
-
+    this->m_bExitFlag=false;
     this->start();
     return 0;
 }
@@ -187,7 +187,7 @@ void ZH264EncThread::run()
     char *pYUV422Buffer=new char[1*1024*1024];
     char *yuv420pBuffer=new char[1*1024*1024];
     bool bIPBFlag=true;
-    while(!gGblPara.m_bGblRst2Exit)
+    while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
     {
         x264_picture_t picOut;
         int nEncodeBytes=0;
@@ -218,6 +218,8 @@ void ZH264EncThread::run()
         memcpy(u,yuv420pBuffer+307200,76800);
         memcpy(v,yuv420pBuffer+384000,76800);
 
+        //一个I帧一个P帧，这样节省传输带宽.
+        //IP,IP,IP,IP....
         if(bIPBFlag)
         {
            pPicIn->i_type=X264_TYPE_KEYFRAME;

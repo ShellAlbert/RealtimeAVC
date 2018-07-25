@@ -92,7 +92,9 @@ void ZPCMEncThread::run()
     encoder=opus_multistream_surround_encoder_create(SAMPLE_RATE,CHANNELS_NUM,mapping_family,&streams,&coupled_streams,stream_map,OPUS_APPLICATION_AUDIO,&err);
     if(err!=OPUS_OK || encoder==NULL)
     {
-        qDebug()<<"<error>:error at opus_multistream_surround_encoder_create(),"<<opus_strerror(err);
+        qDebug()<<"<Error>:error at create opus encode "<<opus_strerror(err);
+        //set global request to exit flag to cause other threads to exit.
+        gGblPara.m_bGblRst2Exit=true;
         return;
     }
 #if 0
@@ -197,6 +199,11 @@ void ZPCMEncThread::run()
         }
         nPCMLen=this->m_rbEncode->ZGetElement((qint8*)pPCMBuffer,BLOCK_SIZE);
         this->m_rbEncode->m_semaFree->release();//空闲信号量加1
+        if(nPCMLen<=0)
+        {
+            qDebug()<<"<Error>:PCMEncThread,error to get pcm data len from encode queue.";
+            continue;
+        }
 
         //encode pcm to opus.
         qint32 nNewPCMBytes=nPCMLen;
@@ -221,7 +228,7 @@ void ZPCMEncThread::run()
                 //qint32 nBytes=opus_multistream_encode_float(encoder,(const float *)pOpusTails,OPUS_SAMPLE_FRMSIZE,(unsigned char*)pEncBuffer,BLOCK_SIZE);
                 if(nBytes<0)
                 {
-                    qDebug()<<"<error>:error at opus_encode(),"<<opus_strerror(nBytes);
+                    qDebug()<<"<Error>:PCMEncThread,error at opus_encode(),"<<opus_strerror(nBytes);
                 }else{
                     //qDebug()<<"<opus>:tail encode okay,pcm="<<OPUS_SAMPLE_FRMSIZE<<",ret="<<nBytes;
                     //新的PCM数据量将减少.
@@ -230,14 +237,23 @@ void ZPCMEncThread::run()
 
                     //qDebug()<<"we need "<<nPaddingBytes<<",new pcm remaings:"<<nNewPCMBytes;
 
-                    //after encode,put opus data into tx queue.
-                    if(this->m_rbTx->m_semaFree->tryAcquire())//空闲信号量减1.
-                    {
-                        this->m_rbTx->ZPutElement((qint8*)pEncBuffer,nBytes);
-                        this->m_rbTx->m_semaUsed->release();//已用信号量加1.
-                    }else{
-                        qDebug()<<"<Warning>:opus tcp queue is full,trash new frame.";
-                    }
+                    //after encode,try to put opus data into tx queue.
+                    do{
+                        qint32 nTryTimes=0;
+                        if(this->m_rbTx->m_semaFree->tryAcquire())//空闲信号量减1.
+                        {
+                            this->m_rbTx->ZPutElement((qint8*)pEncBuffer,nBytes);
+                            this->m_rbTx->m_semaUsed->release();//已用信号量加1.
+                            break;
+                        }
+                        if(nTryTimes++>10)
+                        {
+                            qDebug()<<"<Error>:PCMEncThread,timeout to put encode pcm to tx queue,trash this frame.";
+                            break;
+                        }
+                        qDebug()<<"<Warning>:PCMEncThread,audio tx queue is full,try times "<<nTryTimes<<".";
+                        this->usleep(AUDIO_THREAD_SCHEDULE_US);
+                    }while(1);
                 }
             }
             //reset.
@@ -277,17 +293,26 @@ void ZPCMEncThread::run()
             //qint32 nBytes=opus_multistream_encode_float(encoder,(const float *)pcmData,OPUS_SAMPLE_FRMSIZE,(unsigned char*)pEncBuffer,BLOCK_SIZE);
             if(nBytes<0)
             {
-                qDebug()<<"<error>:error at opus_encode(),"<<opus_strerror(nBytes);
+                qDebug()<<"<Error>:PCMEncThread,error at opus_encode(),"<<opus_strerror(nBytes);
             }else{
                 //qDebug()<<"<opus>:encode okay,pcm="<<OPUS_SAMPLE_FRMSIZE<<",opus="<<nBytes;
-                //after encode,put opus data into tx queue.
-                if(this->m_rbTx->m_semaFree->tryAcquire())//空闲信号量减1.
-                {
-                    this->m_rbTx->ZPutElement((qint8*)pEncBuffer,nBytes);
-                    this->m_rbTx->m_semaUsed->release();//已用信号量加1.
-                }else{
-                    qDebug()<<"<Warning>:opus tcp queue is full,trash new frame.";
-                }
+                //after encode,try to put opus data into tx queue.
+                do{
+                    qint32 nTryTimes=0;
+                    if(this->m_rbTx->m_semaFree->tryAcquire())//空闲信号量减1.
+                    {
+                        this->m_rbTx->ZPutElement((qint8*)pEncBuffer,nBytes);
+                        this->m_rbTx->m_semaUsed->release();//已用信号量加1.
+                        break;
+                    }
+                    if(nTryTimes++>10)
+                    {
+                        qDebug()<<"<Error>:PCMEncThread,timeout to put encode pcm to tx queue,trash this frame.";
+                        break;
+                    }
+                    qDebug()<<"<Warning>:PCMEncThread,audio tx queue is full,try times "<<nTryTimes<<".";
+                    this->usleep(AUDIO_THREAD_SCHEDULE_US);
+                }while(1);
             }
             nOffsetIndex+=OPUS_BLKFRM_SIZEx2;//OPUS_BLKFRM_SIZE*CHANNELS_NUM*sizeof(opus_int16);
             //qDebug()<<"offsetIndex="<<nOffsetIndex;
@@ -303,9 +328,9 @@ void ZPCMEncThread::run()
     }
     opus_multistream_encoder_destroy(encoder);
     delete [] pOpusTails;
-    //set exit flag to help other thread to exit.
-    gGblPara.m_audio.m_bPCMEncThreadExitFlag=true;
-    emit this->ZSigThreadFinished();
     qDebug()<<"<MainLoop>:PCMEncThread ends.";
+    //set global request to exit flag to help other thread to exit.
+    gGblPara.m_bGblRst2Exit=true;
+    emit this->ZSigThreadFinished();
     return;
 }

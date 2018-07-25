@@ -11,15 +11,15 @@
 #define TCP_PORT_AUDIO  6801 //传输opus音频
 #define TCP_PORT_CTL    6802 //传输音频算法启停控制
 #define TCP_PORT_VIDEO  6803 //传输h264视频
-#define TCP_PORT_FORWARD   6804 //串口透传，用于Android手工调节电机，测距，设置参数等
+#define TCP_PORT_FORWARD   6804 //串口透传，用于Android手工调节电机，测距，设置参数等.
+#define TCP_PORT_VIDEO2  6805 //传输h264视频
 
 #define DRW_IMG_SIZE_W  500
 #define DRW_IMG_SIZE_H  500
 
 //use usleep() to reduce cpu heavy load.
 #define AUDIO_THREAD_SCHEDULE_US    (1000*10) //10ms.
-#define VIDEO_THREAD_SCHEDULE_US    (1000*10) //30ms.
-
+#define VIDEO_THREAD_SCHEDULE_US    (1000*100) //10ms.
 /////////////////////////////////////////////////////////////////////////////
 #include <QString>
 #include <QQueue>
@@ -101,7 +101,7 @@ public:
     bool m_bCutThreadExitFlag;//Noise Suppression thread.
     bool m_bPlayThreadExitFlag;//Local playback thread.
     bool m_bPCMEncThreadExitFlag;//Opus encode thread.
-    bool m_bTcpDumpThreadExitFlag;//Audio Tx Tcp thread.
+    bool m_bTcpTxThreadExitFlag;//Audio Tx Tcp thread.
 
 public:
     //run mode.
@@ -131,7 +131,18 @@ public:
     //同一时刻我们仅允许一个tcp客户端连接.
     bool m_bAudioTcpConnected;
 };
+class ZVideoParam
+{
+public:
+    ZVideoParam();
+public:
+    QString m_Cam1ID;
+    QString m_Cam2ID;
 
+    //不比较CamID，不决定主辅摄像头
+    //用于第一次运行时获取摄像头信息
+    bool m_bDoNotCmpCamId;
+};
 class ZGblPara
 {
 public:
@@ -176,7 +187,6 @@ public:
     QString m_uartName;
 public:
     bool m_bDebugMode;
-    bool m_bVerbose;
     bool m_bDumpCamInfo2File;
     bool m_bCaptureLog;
     bool m_bTransfer2PC;
@@ -204,6 +214,7 @@ public:
     //图像传输线程.
     bool m_bVideoTxThreadExitFlag;
     bool m_bVideoTcpConnected;
+    bool m_bVideoTcpConnected2;
 
 public:
     //Android(tcp) <--> STM32(uart) 串口透传线程相关.
@@ -222,10 +233,13 @@ public:
 public:
     //JSON协议控制标志位.
     bool m_bJsonImgPro;//ImgPro图像比对启停控制标志位.
-    bool m_bJsonFlushUI;//是否刷新本地UI.
+    bool m_bJsonFlushUIImg;//是否刷新本地UI.
+    bool m_bJsonFlushUIWav;
 public:
     //audio related parameters.
     ZAudioParam m_audio;
+    //video related parameters.
+    ZVideoParam m_video;
 };
 extern ZGblPara gGblPara;
 extern cv::Mat QImage2cvMat(const QImage &img);
@@ -250,4 +264,6 @@ public:
 extern QByteArray qint32ToQByteArray(qint32 val);
 extern qint32 QByteArrayToqint32(QByteArray ba);
 
+
+#define _CURRENT_DATETIME_    QDateTime::currentDateTime().toString("[yyyy/MM/dd hh:mm:ss]")
 #endif // ZGBLPARA_H

@@ -182,6 +182,112 @@ int YUYVToRGB_table(unsigned char *yuv, unsigned char *rgb, unsigned int width,u
     }
     return 0;
 }
+
+
+static int convert_yuv_to_rgb_pixel(int y, int u, int v)
+
+{
+
+    unsigned int pixel32 = 0;
+
+    unsigned char *pixel = (unsigned char *)&pixel32;
+
+    int r, g, b;
+
+    r = y + (1.370705 * (v-128));
+
+    g = y - (0.698001 * (v-128)) - (0.337633 * (u-128));
+
+    b = y + (1.732446 * (u-128));
+
+    if(r > 255) r = 255;
+
+    if(g > 255) g = 255;
+
+    if(b > 255) b = 255;
+
+    if(r < 0) r = 0;
+
+    if(g < 0) g = 0;
+
+    if(b < 0) b = 0;
+
+    pixel[0] = r * 220 / 256;
+
+    pixel[1] = g * 220 / 256;
+
+    pixel[2] = b * 220 / 256;
+
+    return pixel32;
+
+}
+
+
+
+int convert_yuv_to_rgb_buffer(unsigned char *yuv, unsigned char *rgb, unsigned int width, unsigned int height)
+
+{
+
+    unsigned int in, out = 0;
+
+    unsigned int pixel_16;
+
+    unsigned char pixel_24[3];
+
+    unsigned int pixel32;
+
+    int y0, u, y1, v;
+
+    for(in = 0; in < width * height * 2; in += 4) {
+
+        pixel_16 = yuv[in + 3] << 24 |
+
+                                  yuv[in + 2] << 16 |
+
+                                                 yuv[in + 1] <<  8 |
+
+                                                                 yuv[in + 0];
+
+        y0 = (pixel_16 & 0x000000ff);
+
+        u  = (pixel_16 & 0x0000ff00) >>  8;
+
+        y1 = (pixel_16 & 0x00ff0000) >> 16;
+
+        v  = (pixel_16 & 0xff000000) >> 24;
+
+        pixel32 = convert_yuv_to_rgb_pixel(y0, u, v);
+
+        pixel_24[0] = (pixel32 & 0x000000ff);
+
+        pixel_24[1] = (pixel32 & 0x0000ff00) >> 8;
+
+        pixel_24[2] = (pixel32 & 0x00ff0000) >> 16;
+
+        rgb[out++] = pixel_24[0];
+
+        rgb[out++] = pixel_24[1];
+
+        rgb[out++] = pixel_24[2];
+
+        pixel32 = convert_yuv_to_rgb_pixel(y1, u, v);
+
+        pixel_24[0] = (pixel32 & 0x000000ff);
+
+        pixel_24[1] = (pixel32 & 0x0000ff00) >> 8;
+
+        pixel_24[2] = (pixel32 & 0x00ff0000) >> 16;
+
+        rgb[out++] = pixel_24[0];
+
+        rgb[out++] = pixel_24[1];
+
+        rgb[out++] = pixel_24[2];
+
+    }
+    return 0;
+}
+
 ZImgCapThread::ZImgCapThread(QString devNodeName,qint32 nPreWidth,qint32 nPreHeight,qint32 nPreFps,bool bMainCamera)
 {
     this->m_devName=devNodeName;
@@ -190,8 +296,6 @@ ZImgCapThread::ZImgCapThread(QString devNodeName,qint32 nPreWidth,qint32 nPreHei
     this->m_nPreFps=nPreFps;
     this->m_bMainCamera=bMainCamera;
 
-    //capture image to local display queue.
-    this->m_rbDisp=NULL;
     //capture image to process queue.
     this->m_rbProcess=NULL;
     //capture yuv to yuv queue.
@@ -202,11 +306,6 @@ ZImgCapThread::ZImgCapThread(QString devNodeName,qint32 nPreWidth,qint32 nPreHei
 ZImgCapThread::~ZImgCapThread()
 {
 
-}
-qint32 ZImgCapThread::ZBindDispQueue(ZRingBuffer *rbDisp)
-{
-    this->m_rbDisp=rbDisp;
-    return 0;
 }
 qint32 ZImgCapThread::ZBindProcessQueue(ZRingBuffer *rbProcess)
 {
@@ -220,16 +319,10 @@ qint32 ZImgCapThread::ZBindYUVQueue(ZRingBuffer *rbYUV)
 }
 qint32 ZImgCapThread::ZStartThread()
 {
-    //check disp queue.
-    if(this->m_rbDisp==NULL)
-    {
-        qDebug()<<"<error>:no bind display queue,cannot start thread.";
-        return -1;
-    }
     //check process queue.
     if(this->m_rbProcess==NULL)
     {
-        qDebug()<<"<error>:no bind process queue,cannot start thread.";
+        qDebug()<<"<Error>:"<<_CURRENT_DATETIME_<<"ImgCapThread,no bind process queue,cannot start thread.";
         return -1;
     }
     //check the yuv queue if i am the main camera.
@@ -237,7 +330,7 @@ qint32 ZImgCapThread::ZStartThread()
     {
         if(this->m_rbYUV==NULL)
         {
-            qDebug()<<"<error>:no bind yuv queue,cannot start thread.";
+            qDebug()<<"<Error>:"<<_CURRENT_DATETIME_<<"ImgCapThread,no bind yuv queue,cannot start thread.";
             return -1;
         }
     }
@@ -247,16 +340,10 @@ qint32 ZImgCapThread::ZStartThread()
 }
 qint32 ZImgCapThread::ZStopThread()
 {
+    this->quit();
     this->m_bExitFlag=true;
+    this->wait(1000);
     return 0;
-}
-qint32 ZImgCapThread::ZGetCAMImgWidth()
-{
-    return this->m_cam->ZGetImgWidth();
-}
-qint32 ZImgCapThread::ZGetCAMImgHeight()
-{
-    return this->m_cam->ZGetImgHeight();
 }
 qint32 ZImgCapThread::ZGetCAMImgFps()
 {
@@ -270,122 +357,177 @@ bool ZImgCapThread::ZIsRunning()
 {
     return true;
 }
-QString ZImgCapThread::ZGetCAMID()
-{
-    return this->m_cam->ZGetCAMID();
-}
 
 void ZImgCapThread::run()
 {
-    ZCAMDevice *camDev=new ZCAMDevice(this->m_devName,this->m_nPreWidth,this->m_nPreHeight,this->m_nPreFps);
+    ZCAMDevice *camDev=new ZCAMDevice(this->m_devName,this->m_nPreWidth,this->m_nPreHeight,this->m_nPreFps,this->m_bMainCamera);
     if(camDev->ZOpenCAM()<0)
     {
-        qDebug()<<"<error>:failed to open cam device "<<this->m_devName;
+        qDebug()<<"<Error>:"<<_CURRENT_DATETIME_<<"ImgCapThread,failed to open cam device"<<this->m_devName;
+        //set global request to exit flag to cause other threads to exit.
+        gGblPara.m_bGblRst2Exit=true;
         return;
     }
     if(camDev->ZInitCAM()<0)
     {
-        qDebug()<<"<error>:failed to init cam device "<<this->m_devName;
+        qDebug()<<"<Error>:"<<_CURRENT_DATETIME_<<"ImgCapThread,failed to init cam device"<<this->m_devName;
+        //set global request to exit flag to cause other threads to exit.
+        gGblPara.m_bGblRst2Exit=true;
         return;
     }
     if(camDev->ZInitMAP()<0)
     {
-        qDebug()<<"<error>:failed to init map device "<<this->m_devName;
+        qDebug()<<"<Error>:"<<_CURRENT_DATETIME_<<"ImgCapThread,failed to init map device"<<this->m_devName;
+        //set global request to exit flag to cause other threads to exit.
+        gGblPara.m_bGblRst2Exit=true;
         return;
     }
     //malloc memory.
-    qint32 nSingleImgSize=camDev->ZGetImgWidth()*camDev->ZGetImgHeight()*3*sizeof(char);
+    qint32 nSingleImgSize=gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3*sizeof(char);
     unsigned char *pRGBBuffer=(unsigned char*)malloc(nSingleImgSize);
     if(NULL==pRGBBuffer)
     {
-        qDebug()<<"<error>:failed to allocate RGB buffer for device "<<this->m_devName;
+        qDebug()<<"<Error>:"<<_CURRENT_DATETIME_<<"ImgCapThread,failed to allocate RGB buffer for device"<<this->m_devName;
+        //set global request to exit flag to cause other threads to exit.
+        gGblPara.m_bGblRst2Exit=true;
         return;
     }
     //start capture.
     if(camDev->ZStartCapture()<0)
     {
-        qDebug()<<"<error>:failed to start capture "<<this->m_devName;
+        qDebug()<<"<Error>:"<<_CURRENT_DATETIME_<<"ImgCapThread,failed to start capture"<<this->m_devName;
+        //set global request to exit flag to cause other threads to exit.
+        gGblPara.m_bGblRst2Exit=true;
         return;
     }
     if(this->m_bMainCamera)
     {
-        qDebug()<<"<MainLoop>:MainCamera capture starts "<<this->m_devName<<".";
+        qDebug()<<"<MainLoop>:"<<_CURRENT_DATETIME_<<"MainCamera capture starts"<<this->m_devName<<".";
     }else{
-        qDebug()<<"<MainLoop>:AuxCamera capture starts "<<this->m_devName<<".";
+        qDebug()<<"<MainLoop>:"<<_CURRENT_DATETIME_<<"AuxCamera capture starts"<<this->m_devName<<".";
     }
 
-    while(!gGblPara.m_bGblRst2Exit || !this->m_bExitFlag)
+    while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
     {
         qint32 nLen;
-        qint64 nStartTs,nEndTs;
         unsigned char *pYUVData;
-        if(gGblPara.m_bCaptureLog)
+        //get a yuv frame.
+        //返回值:<0错误，0:超时，需要再次调用，>0：成功.
+        int ret=camDev->ZGetFrame((void**)&pYUVData,(size_t*)&nLen);
+        if(ret<0)
         {
-            nStartTs=QDateTime::currentDateTime().toMSecsSinceEpoch();
-            qDebug()<<"<TS>:"<<this->m_devName<<" start at "<<nStartTs;
-        }
-        if(camDev->ZGetFrame((void**)&pYUVData,(size_t*)&nLen)<0)
-        {
-            qDebug()<<"<error>:failed to get yuv data from "<<this->m_devName;
+            qDebug()<<"<Error>:"<<_CURRENT_DATETIME_<<"ImgCapThread,failed to get yuv data from"<<this->m_devName;
             break;
-        }
-
-        //if I am the main camera,put yuv data to yuv queue.
-        //只有当有客户端连接时,才将yuv数据扔入yuv队列中,促使编码线程工作.
-        if(this->m_bMainCamera && gGblPara.m_bVideoTcpConnected)
+        }else if(0==ret)
         {
-            if(this->m_rbYUV->m_semaFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
+            //timeout,retry again.
+            qDebug()<<"<Warning>:"<<_CURRENT_DATETIME_<<"ImgCapThread,select() timeout"<<this->m_devName;
+            this->usleep(VIDEO_THREAD_SCHEDULE_US);
+            continue;
+        }else if(ret>0)
+        {
+            //只有当有客户端连接时,才将yuv数据扔入yuv队列中,促使编码线程工作.
+            bool bPut2YUVQueue=false;
+            if(this->m_bMainCamera)
             {
-                this->m_rbYUV->ZPutElement((qint8*)pYUVData,nLen);
-                this->m_rbYUV->m_semaUsed->release();//已用信号量加1.
+                if(gGblPara.m_bVideoTcpConnected)//主摄像头
+                {
+                    bPut2YUVQueue=true;
+                }
             }else{
-                qDebug()<<"<Warning>:YUV queue is full,trash new captured image.";
-                this->usleep(VIDEO_THREAD_SCHEDULE_US);
+                if(gGblPara.m_bVideoTcpConnected2)//辅摄像头
+                {
+                    bPut2YUVQueue=true;
+                }
+            }
+
+            if(bPut2YUVQueue)
+            {
+                qint32 nTryTimes=0;
+                do{
+                    if(this->m_rbYUV->m_semaFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
+                    {
+                        this->m_rbYUV->ZPutElement((qint8*)pYUVData,nLen);
+                        this->m_rbYUV->m_semaUsed->release();//已用信号量加1.
+                        break;
+                    }
+                    if(nTryTimes++>10)
+                    {
+                        qDebug()<<"<Error>:"<<_CURRENT_DATETIME_<<"ImgCapThread,timeout to put data to yuv queue.trash this frame.";
+                        break;
+                    }
+                    //qDebug()<<"<Warning>:"<<_CURRENT_DATETIME_<<"ImgCapThread,yuv queue is full,try times"<<nTryTimes;
+                    this->usleep(VIDEO_THREAD_SCHEDULE_US);
+                }while(1);
+            }
+
+
+            //这段代码将YUV420P转换为RGB888太耗CPU了。
+            //使用top查看能达到80%以上的CPU占用率。
+            //此处需要优化。
+            //convert yuv to RGB.
+            //YUYVToRGB_table(pYUVData,pRGBBuffer,gGblPara.m_widthCAM1,gGblPara.m_heightCAM1);
+            //YU YV YU YV .....
+            convert_yuv_to_rgb_buffer(pYUVData,pRGBBuffer,gGblPara.m_widthCAM1,gGblPara.m_heightCAM1);
+#if 0
+            unsigned char *pYUV = pYUVData;
+            unsigned char *pGRB = pRGBBuffer;
+            short y1=0, y2=0, u=0, v=0;
+            int count=camDev->ZGetImgWidth()*camDev->ZGetImgHeight()/2;
+            for(int i=0;i<count; i++)
+            {
+                y1=*pYUV++ ;
+                u=*pYUV++ ;
+                y2=*pYUV++ ;
+                v=*pYUV++ ;
+
+                *pGRB++=clip(y1+redAdjust[v]);
+                *pGRB++=clip(y1+greenAdjust1[u]+greenAdjust2[v]);
+                *pGRB++=clip(y1+blueAdjust[u]);
+                *pGRB++=clip(y2+redAdjust[v]);
+                *pGRB++=clip(y2+greenAdjust1[u]+greenAdjust2[v]);
+                *pGRB++=clip(y2+blueAdjust[u]);
+
+                //this->usleep(1000);
+            }
+#endif
+            //convert_yuv_to_rgb_buffer(pYUVData,pRGBBuffer,camDev->ZGetImgWidth(),camDev->ZGetImgHeight());
+            //build a RGB888 QImage object.
+            //QImage newQImg((uchar*)pRGBBuffer,camDev->ZGetImgWidth(),camDev->ZGetImgHeight(),QImage::Format_RGB888);
+            //free a buffer for device.
+            camDev->ZUnGetFrame();
+
+            //只有当开启ImgPro标志位被置位时（通过Android Json协议).
+            //采集线程才将图像扔入process队列，从而唤醒图像处理线程工作.
+            if(gGblPara.m_bJsonImgPro)
+            {
+                qint32 nTryTimes=0;
+                do{
+                    if(this->m_rbProcess->m_semaFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
+                    {
+                        //因为图像是RGB888的，所以总字节数=width*height*3.
+                        this->m_rbProcess->ZPutElement((qint8*)pRGBBuffer,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3);
+                        this->m_rbProcess->m_semaUsed->release();//已用信号量加1.
+                        break;
+                    }
+                    if(nTryTimes++>10)
+                    {
+                        qDebug()<<"<Error>:"<<_CURRENT_DATETIME_<<"ImgCapThread,timeout to put new yuv to ImgPro queue.trash this frame.";
+                        break;
+                    }
+                    //qDebug()<<"<Warning>:"<<_CURRENT_DATETIME_<<"ImgCapThread,ImgPro queue is full,try times"<<nTryTimes;
+                    this->usleep(VIDEO_THREAD_SCHEDULE_US);
+                }while(1);
+            }
+
+            //只有开启本地UI刷新才将采集到的图像扔入disp队列.
+            if(gGblPara.m_bJsonFlushUIImg)
+            {
+                QImage newImg((uchar*)pRGBBuffer,gGblPara.m_widthCAM1,gGblPara.m_heightCAM1,QImage::Format_RGB888);
+                emit this->ZSigNewImgArrived(newImg);
             }
         }
-
-        //convert yuv to RGB.
-        YUYVToRGB_table(pYUVData,pRGBBuffer,camDev->ZGetImgWidth(),camDev->ZGetImgHeight());
-        //build a RGB888 QImage object.
-        //QImage newQImg((uchar*)pRGBBuffer,camDev->ZGetImgWidth(),camDev->ZGetImgHeight(),QImage::Format_RGB888);
-        //free a buffer for device.
-        camDev->ZUnGetFrame();
-
-        if(gGblPara.m_bCaptureLog)
-        {
-            nEndTs=QDateTime::currentDateTime().toMSecsSinceEpoch();
-            qDebug()<<"<TS>:"<<this->m_devName<<" end at "<<nEndTs<<",cost "<<nEndTs-nStartTs<<"ms";
-        }
-
-        //只有当开启ImgPro标志位被置位时（通过Android Json协议).
-        //采集线程才将图像扔入process队列，从而唤醒图像处理线程工作.
-        if(gGblPara.m_bJsonImgPro)
-        {
-            if(this->m_rbProcess->m_semaFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
-            {
-                //因为图像是RGB888的，所以总字节数=width*height*3.
-                this->m_rbProcess->ZPutElement((qint8*)pRGBBuffer,camDev->ZGetImgWidth()*camDev->ZGetImgHeight()*3);
-                this->m_rbProcess->m_semaUsed->release();//已用信号量加1.
-            }else{
-                qDebug()<<"<Warning>:ImgProcess queue is full,trash new captured image.";
-                this->usleep(VIDEO_THREAD_SCHEDULE_US);
-            }
-        }
-
-        //只有开启本地UI刷新才将采集到的图像扔入disp队列.
-        if(gGblPara.m_bJsonFlushUI)
-        {
-            if(this->m_rbDisp->m_semaFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
-            {
-                //因为图像是RGB888的，所以总字节数=width*height*3.
-                this->m_rbDisp->ZPutElement((qint8*)pRGBBuffer,camDev->ZGetImgWidth()*camDev->ZGetImgHeight()*3);
-                this->m_rbDisp->m_semaUsed->release();//已用信号量加1.
-                emit this->ZSigNewImgArrived();
-            }else{
-                qDebug()<<"<Warning>:LocalDisp queue is full,trash new captured image.";
-                this->usleep(VIDEO_THREAD_SCHEDULE_US);
-            }
-        }
+        //this->usleep(VIDEO_THREAD_SCHEDULE_US);
     }
     //do some clean. stop camera.
     camDev->ZStopCapture();
@@ -397,10 +539,10 @@ void ZImgCapThread::run()
     //同时设置全局请求退出标志，请求其他线程退出.
     if(this->m_bMainCamera)
     {
-        qDebug()<<"<MainLoop>:MainCamera capture starts "<<this->m_devName<<".";
+        qDebug()<<"<MainLoop>:"<<_CURRENT_DATETIME_<<"MainCamera capture ends "<<this->m_devName<<".";
         gGblPara.m_bMainCapThreadExitFlag=true;
     }else{
-        qDebug()<<"<MainLoop>:AuxCamera capture starts "<<this->m_devName<<".";
+        qDebug()<<"<MainLoop>:"<<_CURRENT_DATETIME_<<"AuxCamera capture ends "<<this->m_devName<<".";
         gGblPara.m_bAuxCapThreadExitFlag=true;
     }
     gGblPara.m_bGblRst2Exit=true;

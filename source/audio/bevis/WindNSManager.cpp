@@ -77,14 +77,14 @@ void _WINDNSManager::vp_process( Int16 *xfrm, Int16 *yfrm, Int16 ndims, Int16 le
     //维数不为2
     if(ndims != 2)
     {
-        qDebug()<<"<error>:vp_process(),ndims!=2.";
+        qDebug()<<"<Error>:vp_process(),ndims!=2.";
         return;
     }
     //2*256=512.
     //一次仅能处理512字节
     if(len != (ndims*frmSht))
     {
-        qDebug()<<"<error>:vp_process(),len!=2*256";
+        qDebug()<<"<Error>:vp_process(),len!=2*256";
         return;
     }
 

@@ -16,7 +16,7 @@ void ZAudioTxThread::run()
     char *txBuffer=new char[BLOCK_SIZE];
     qDebug()<<"<MainLoop>:AudioTxThread starts.";
 
-    while(!gGblPara.m_bGblRst2Exit)
+    while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
     {
         QTcpServer *tcpServer=new QTcpServer;
         int on=1;
@@ -24,13 +24,14 @@ void ZAudioTxThread::run()
         setsockopt(sockFd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on));
         if(!tcpServer->listen(QHostAddress::Any,TCP_PORT))
         {
-            qDebug()<<"<error>: tcp server error listen on port"<<TCP_PORT;
-            this->sleep(3);
+            qDebug()<<"<Error>: audio tx tcp server error listen on port"<<TCP_PORT;
             delete tcpServer;
-            continue;
+            //set global request to exit flag to cause other threads to exit.
+            gGblPara.m_bGblRst2Exit=true;
+            break;
         }
         //wait until get a new connection.
-        while(!gGblPara.m_bGblRst2Exit)
+        while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
         {
             //qDebug()<<"wait for tcp connection";
             if(tcpServer->waitForNewConnection(1000*10))
@@ -39,12 +40,12 @@ void ZAudioTxThread::run()
             }
         }
 
-        if(!gGblPara.m_bGblRst2Exit)
+        if(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
         {
             QTcpSocket *tcpSocket=tcpServer->nextPendingConnection();
             if(NULL==tcpSocket)
             {
-                qDebug()<<"<error>: failed to get next pending connection.";
+                qDebug()<<"<Error>:AudioTxThread,failed to get next pending connection.";
             }else{
                 //qDebug()<<"new connection,close tcp server.";
                 //客户端连接上后，就判断服务监听端，这样只允许一个tcp连接.
@@ -54,7 +55,7 @@ void ZAudioTxThread::run()
                 //qDebug()<<"audio connected.";
 
                 //向客户端发送音频数据包.
-                while(!gGblPara.m_bGblRst2Exit)
+                while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
                 {
                     //fetch data from tx queue.
                     qint32 nTxBytes=0;
@@ -65,10 +66,9 @@ void ZAudioTxThread::run()
                     }
                     nTxBytes=this->m_rbTx->ZGetElement((qint8*)txBuffer,BLOCK_SIZE);
                     this->m_rbTx->m_semaFree->release();//空闲信号量加1.
-
                     if(nTxBytes<=0)
                     {
-                        qDebug()<<"<error>:error length get from audio tx queue.";
+                        qDebug()<<"<Error>:AudioTxThread,error data length get from audio tx queue.";
                         break;
                     }
 
@@ -77,12 +77,12 @@ void ZAudioTxThread::run()
                     //qDebug("%d:%02x %02x %02x %02x\n",baOpusData.size(),(uchar)baOpusPktLen.at(0),(uchar)baOpusPktLen.at(1),(uchar)baOpusPktLen.at(2),(uchar)baOpusPktLen.at(3));
                     if(tcpSocket->write(baOpusPktLen)<0)
                     {
-                        qDebug()<<"<error>:socket write error,break it.";
+                        qDebug()<<"<Error>:AudioTxThread,socket write error,break it.";
                         break;
                     }
                     if(tcpSocket->write(txBuffer,nTxBytes)<0)
                     {
-                        qDebug()<<"<error>:socket write error,break it.";
+                        qDebug()<<"<Error>:AudioTxThread,socket write error,break it.";
                         break;
                     }
                     tcpSocket->waitForBytesWritten(1000);
@@ -96,11 +96,14 @@ void ZAudioTxThread::run()
     }
     delete [] txBuffer;
     qDebug()<<"<MainLoop>:AudioTxThread ends.";
+    //set global request to exit flag to help other thread to exit.
+    gGblPara.m_bGblRst2Exit=true;
     emit this->ZSigThreadFinished();
     return;
 }
 qint32 ZAudioTxThread::ZStartThread(ZRingBuffer *rbTx)
 {
+    this->m_bExitFlag=false;
     this->m_rbTx=rbTx;
     this->start();
     return 0;

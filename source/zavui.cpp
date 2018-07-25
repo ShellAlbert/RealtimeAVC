@@ -57,7 +57,7 @@ ZAVUI::ZAVUI(QWidget *parent):QFrame(parent)
     //音频客户端是否连接/视频客户端是否连接/Tcp2Uart是否连接/控制端是否连接.
     this->m_llAVClients=new QLabel;
     this->m_llAVClients->setAlignment(Qt::AlignCenter);
-    this->m_llAVClients->setText(tr("Audio:X Video:X\nCtl:X Forward:X"));
+    this->m_llAVClients->setText(tr("A:X V:X/X\nCTL:X FWD:X"));
 
     this->m_vLayoutInfo=new QVBoxLayout;
     this->m_vLayoutInfo->addWidget(this->m_llDiffXY);
@@ -90,10 +90,17 @@ ZAVUI::ZAVUI(QWidget *parent):QFrame(parent)
     this->m_SSIMMatchBar->setValue(0);
     this->m_SSIMMatchBar->setRange(0,100);
     this->m_SSIMMatchBar->setStyleSheet("QProgressBar::chunk{background-color:#FF0000}");
-    this->m_SSIMMatchBar->setFormat(tr("SSIM %p%"));
+
+    this->m_barDGain=new QProgressBar;
+    this->m_barDGain->setOrientation(Qt::Vertical);
+    this->m_barDGain->setValue(0);
+    this->m_barDGain->setRange(0,90);
+    this->m_barDGain->setStyleSheet("QProgressBar::chunk{background-color:#00FF00}");
+    this->m_nDGainShadow=0;
 
     this->m_hLayout=new QHBoxLayout;
     this->m_hLayout->addWidget(this->m_disp[0]);
+    this->m_hLayout->addWidget(this->m_barDGain);
     this->m_hLayout->addWidget(this->m_SSIMMatchBar);
     this->m_hLayout->addWidget(this->m_disp[1]);
 
@@ -138,6 +145,7 @@ ZAVUI::~ZAVUI()
 
     delete this->m_hLayoutWavFormAndInfo;
 
+    delete this->m_barDGain;
     delete this->m_SSIMMatchBar;
     delete this->m_disp[0];
     delete this->m_disp[1];
@@ -149,23 +157,6 @@ void ZAVUI::closeEvent(QCloseEvent *event)
     //set global request exit flag.
     gGblPara.m_bGblRst2Exit=true;
     event->ignore();
-}
-qint32 ZAVUI::ZBindMainDispQueue(ZRingBuffer *rbDispMain)
-{
-    this->m_disp[0]->ZBindQueue(rbDispMain);
-    return 0;
-}
-qint32 ZAVUI::ZBindAuxDispQueue(ZRingBuffer *rbDispAux)
-{
-    this->m_disp[1]->ZBindQueue(rbDispAux);
-    return 0;
-}
-qint32 ZAVUI::ZBindImgProcessedSet(QQueue<ZImgProcessedSet> *queue,QSemaphore *semaUsed,QSemaphore *semaFree)
-{
-    this->m_queueProcessedSet=queue;
-    this->m_semaProcessedSetUsed=semaUsed;
-    this->m_semaProcessedSetFree=semaFree;
-    return 0;
 }
 qint32 ZAVUI::ZBindWaveFormQueueBefore(ZRingBuffer *rbWaveBefore)
 {
@@ -224,6 +215,11 @@ void ZAVUI::ZSlot1sTimeout()
     {
         videoClient="V";
     }
+    QString videoClient2("X");
+    if(gGblPara.m_bVideoTcpConnected2)
+    {
+        videoClient2="V";
+    }
 
     QString ctlClient("X");
     if(gGblPara.m_bCtlClientConnected)
@@ -236,8 +232,15 @@ void ZAVUI::ZSlot1sTimeout()
     {
         forwardClient="V";
     }
-    this->m_llAVClients->setText(tr("AUDIO:%1 VIDEO:%2\nCTRL:%3 FWD:%4").arg(audioClient).arg(videoClient).arg(ctlClient).arg(forwardClient));
 
+    this->m_llAVClients->setText(tr("A:%1 V:%2/%3\nCTL:%4 FWD:%5").arg(audioClient).arg(videoClient).arg(videoClient2).arg(ctlClient).arg(forwardClient));
+
+    //update the DGain bar.
+    if(this->m_nDGainShadow!=gGblPara.m_audio.m_nGaindB)
+    {
+        this->m_barDGain->setValue(gGblPara.m_audio.m_nGaindB);
+        this->m_nDGainShadow=gGblPara.m_audio.m_nGaindB;
+    }
 }
 void ZAVUI::ZUpdateMatchBar(QProgressBar *pBar,qint32 nVal)
 {
@@ -259,40 +262,17 @@ void ZAVUI::ZUpdateMatchBar(QProgressBar *pBar,qint32 nVal)
         pBar->setStyleSheet("QProgressBar::chunk{ background-color:#FF0000}");
     }
 }
-void ZAVUI::ZSlotFlushWaveBefore()
+void ZAVUI::ZSlotFlushWaveBefore(const QByteArray &baPCM)
 {
-    //fetch data from wav form queue before and write it to wav form device.
-    if(this->m_rbWaveBefore->m_semaUsed->tryAcquire())
-    {
-        char buffer[BLOCK_SIZE];
-        qint32 nLen=this->m_rbWaveBefore->ZGetElement((qint8*)buffer,sizeof(buffer));
-        this->m_rbWaveBefore->m_semaFree->release();
-        this->m_deviceBefore->write(buffer,nLen);
-    }
+    this->m_deviceBefore->write(baPCM);
 }
-void ZAVUI::ZSlotFlushWaveAfter()
+void ZAVUI::ZSlotFlushWaveAfter(const QByteArray &baPCM)
 {
-    //fetch data from wav form queue before and write it to wav form device.
-    if(this->m_rbWaveAfter->m_semaUsed->tryAcquire())
-    {
-        char buffer[BLOCK_SIZE];
-        qint32 nLen=this->m_rbWaveAfter->ZGetElement((qint8*)buffer,sizeof(buffer));
-        this->m_rbWaveAfter->m_semaFree->release();
-        this->m_deviceAfter->write(buffer,nLen);
-    }
+    this->m_deviceAfter->write(baPCM);
 }
-void ZAVUI::ZSlotFlushProcessedSet()
+void ZAVUI::ZSlotFlushProcessedSet(const ZImgProcessedSet &imgProSet)
 {
-    //fetch processed set from processedSet queue.
-    //and dispatch them to local two displayer.
-    if(this->m_semaProcessedSetUsed->tryAcquire())//已用信号量减1.
-    {
-        ZImgProcessedSet processSet;
-        processSet=this->m_queueProcessedSet->dequeue();
-        this->m_semaProcessedSetFree->release();//空闲信号量加1.
-
-        this->m_disp[0]->ZSetSensitiveRect(processSet.rectTemplate);
-        this->m_disp[1]->ZSetSensitiveRect(processSet.rectMatched);
-        this->m_llDiffXY->setText(tr("Diff XYT\n[X:%1 Y:%2 T:%3ms]").arg(processSet.nDiffX).arg(processSet.nDiffY).arg(processSet.nCostMs));
-    }
+    this->m_disp[0]->ZSetSensitiveRect(imgProSet.rectTemplate);
+    this->m_disp[1]->ZSetSensitiveRect(imgProSet.rectMatched);
+    this->m_llDiffXY->setText(tr("Diff XYT\n[X:%1 Y:%2 T:%3ms]").arg(imgProSet.nDiffX).arg(imgProSet.nDiffY).arg(imgProSet.nCostMs));
 }

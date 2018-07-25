@@ -13,7 +13,7 @@ public:
 protected:
     void run();
 private:
-    void ZParseJson(const QJsonDocument &jsonDoc);
+    QByteArray ZParseJson(const QJsonDocument &jsonDoc);
 private:
     bool m_bExitFlag;
 };

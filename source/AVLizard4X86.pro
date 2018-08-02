@@ -80,7 +80,8 @@ SOURCES += \
     zavui.cpp \
     xyseriesiodevice.cpp \
     ctl/zctlthread.cpp \
-    zringbuffer.cpp
+    zringbuffer.cpp \
+    zmaintask.cpp
 
 
 HEADERS += \
@@ -128,7 +129,8 @@ HEADERS += \
     zavui.h \
     xyseriesiodevice.h \
     ctl/zctlthread.h \
-    zringbuffer.h
+    zringbuffer.h \
+    zmaintask.h
 
 
 RESOURCES += \
@@ -145,3 +147,10 @@ LIBS += -lasound -lopus
 
 INCLUDEPATH += /home/zhangshaoyan/NoiseReduction/librnnoise/include
 LIBS += -L/home/zhangshaoyan/NoiseReduction/librnnoise/lib64 -lrnnoise
+
+INCLUDEPATH += /usr/include/glib-2.0
+INCLUDEPATH += /usr/lib64/glib-2.0/include
+INCLUDEPATH += /usr/include/gstreamer-1.0
+INCLUDEPATH += /usr/lib64/gstreamer-1.0/include
+
+LIBS += -lgstreamer-1.0 -lglib-2.0 -lgobject-2.0

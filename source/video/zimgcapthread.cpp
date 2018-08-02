@@ -302,6 +302,7 @@ ZImgCapThread::ZImgCapThread(QString devNodeName,qint32 nPreWidth,qint32 nPreHei
     this->m_rbYUV=NULL;
 
     this->m_bExitFlag=false;
+    this->m_bCleanup=true;
 }
 ZImgCapThread::~ZImgCapThread()
 {
@@ -353,11 +354,6 @@ QString ZImgCapThread::ZGetDevName()
 {
     return this->m_devName;
 }
-bool ZImgCapThread::ZIsRunning()
-{
-    return true;
-}
-
 void ZImgCapThread::run()
 {
     ZCAMDevice *camDev=new ZCAMDevice(this->m_devName,this->m_nPreWidth,this->m_nPreHeight,this->m_nPreFps,this->m_bMainCamera);
@@ -407,6 +403,7 @@ void ZImgCapThread::run()
         qDebug()<<"<MainLoop>:"<<_CURRENT_DATETIME_<<"AuxCamera capture starts"<<this->m_devName<<".";
     }
 
+    this->m_bCleanup=false;
     while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
     {
         qint32 nLen;
@@ -426,6 +423,7 @@ void ZImgCapThread::run()
             continue;
         }else if(ret>0)
         {
+//            qDebug()<<"yuyv len:"<<nLen;
             //只有当有客户端连接时,才将yuv数据扔入yuv队列中,促使编码线程工作.
             bool bPut2YUVQueue=false;
             if(this->m_bMainCamera)
@@ -443,14 +441,33 @@ void ZImgCapThread::run()
 
             if(bPut2YUVQueue)
             {
+                if(this->m_rbYUV->m_semaFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
+                {
+                    this->m_rbYUV->ZPutElement((qint8*)pYUVData,nLen);
+                    this->m_rbYUV->m_semaUsed->release();//已用信号量加1.
+                }
+#if 0
                 qint32 nTryTimes=0;
                 do{
+#ifdef TRY_TO_GET_PUT_QUEUE
                     if(this->m_rbYUV->m_semaFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
                     {
                         this->m_rbYUV->ZPutElement((qint8*)pYUVData,nLen);
                         this->m_rbYUV->m_semaUsed->release();//已用信号量加1.
                         break;
                     }
+#else
+                    if(1)
+                    {
+                        //qDebug()<<"MainCam:pu to yuv queue begin";
+                        this->m_rbYUV->m_semaFree->acquire();
+                        this->m_rbYUV->ZPutElement((qint8*)pYUVData,nLen);
+                        this->m_rbYUV->m_semaUsed->release();
+                        //qDebug()<<"MainCam:pu to yuv queue end";
+                        break;
+                    }
+#endif
+
                     if(nTryTimes++>10)
                     {
                         qDebug()<<"<Error>:"<<_CURRENT_DATETIME_<<"ImgCapThread,timeout to put data to yuv queue.trash this frame.";
@@ -459,6 +476,7 @@ void ZImgCapThread::run()
                     //qDebug()<<"<Warning>:"<<_CURRENT_DATETIME_<<"ImgCapThread,yuv queue is full,try times"<<nTryTimes;
                     this->usleep(VIDEO_THREAD_SCHEDULE_US);
                 }while(1);
+#endif
             }
 
 
@@ -501,8 +519,16 @@ void ZImgCapThread::run()
             //采集线程才将图像扔入process队列，从而唤醒图像处理线程工作.
             if(gGblPara.m_bJsonImgPro)
             {
+                if(this->m_rbProcess->m_semaFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
+                {
+                    //因为图像是RGB888的，所以总字节数=width*height*3.
+                    this->m_rbProcess->ZPutElement((qint8*)pRGBBuffer,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3);
+                    this->m_rbProcess->m_semaUsed->release();//已用信号量加1.
+                }
+#if 0
                 qint32 nTryTimes=0;
                 do{
+#ifdef TRY_TO_GET_PUT_QUEUE
                     if(this->m_rbProcess->m_semaFree->tryAcquire())//空闲信号量减1,为了防止阻塞，这里使用tryAcquire().
                     {
                         //因为图像是RGB888的，所以总字节数=width*height*3.
@@ -510,6 +536,16 @@ void ZImgCapThread::run()
                         this->m_rbProcess->m_semaUsed->release();//已用信号量加1.
                         break;
                     }
+#else
+                    if(1)
+                    {
+                        this->m_rbProcess->m_semaFree->acquire();
+                        //因为图像是RGB888的，所以总字节数=width*height*3.
+                        this->m_rbProcess->ZPutElement((qint8*)pRGBBuffer,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3);
+                        this->m_rbProcess->m_semaUsed->release();//已用信号量加1.
+                        break;
+                    }
+#endif
                     if(nTryTimes++>10)
                     {
                         qDebug()<<"<Error>:"<<_CURRENT_DATETIME_<<"ImgCapThread,timeout to put new yuv to ImgPro queue.trash this frame.";
@@ -518,6 +554,7 @@ void ZImgCapThread::run()
                     //qDebug()<<"<Warning>:"<<_CURRENT_DATETIME_<<"ImgCapThread,ImgPro queue is full,try times"<<nTryTimes;
                     this->usleep(VIDEO_THREAD_SCHEDULE_US);
                 }while(1);
+#endif
             }
 
             //只有开启本地UI刷新才将采集到的图像扔入disp队列.
@@ -527,7 +564,7 @@ void ZImgCapThread::run()
                 emit this->ZSigNewImgArrived(newImg);
             }
         }
-        //this->usleep(VIDEO_THREAD_SCHEDULE_US);
+        this->usleep(VIDEO_THREAD_SCHEDULE_US);
     }
     //do some clean. stop camera.
     camDev->ZStopCapture();
@@ -547,5 +584,10 @@ void ZImgCapThread::run()
     }
     gGblPara.m_bGblRst2Exit=true;
     emit this->ZSigThreadFinished();
+    this->m_bCleanup=true;
     return;
+}
+bool ZImgCapThread::ZIsExitCleanup()
+{
+    return this->m_bCleanup;
 }

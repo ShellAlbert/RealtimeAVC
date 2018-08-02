@@ -6,13 +6,8 @@
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <signal.h>
-#include <audio/zaudiotask.h>
-#include <video/zvideotask.h>
-#include <forward/ztcp2uartforwardthread.h>
-#include <ctl/zctlthread.h>
-#include <zavui.h>
-#include <zringbuffer.h>
 #include <QMetaType>
+#include "zmaintask.h"
 Q_DECLARE_METATYPE(ZImgProcessedSet)
 
 void gSIGHandler(int sigNo)
@@ -29,6 +24,8 @@ void gSIGHandler(int sigNo)
         break;
     }
 }
+
+
 //AppName: AVLizard
 //capture audio with ALSA,encode with opus.
 //capture video with V4L2,encode with h264.
@@ -41,6 +38,8 @@ int main(int argc,char **argv)
     //usb-fe380000.usb-1
 
     qRegisterMetaType<ZImgProcessedSet>("ZImgProcessedSet");
+    qRegisterMetaType<QAbstractSocket::SocketError>("QAbstractSocket::SocketError");
+
     QApplication app(argc,argv);
     //parse audio command line arguments.
     QCommandLineOption opMode("mode","0:capture to file,1:realtime process,default is 1.","runMode","1");
@@ -238,6 +237,7 @@ int main(int argc,char **argv)
     //Set the signal callback for Ctrl-C
     signal(SIGINT,gSIGHandler);
 
+#if 0
     //start Android(tcp) <--> STM32(uart) forward task.
     ZTcp2UartForwardThread *tcp2UartForward=new ZTcp2UartForwardThread;
     tcp2UartForward->ZStartThread();
@@ -283,16 +283,18 @@ int main(int argc,char **argv)
     QObject::connect(taskAudio->ZGetNoiseCutThread(),SIGNAL(ZSigNewWaveAfterArrived(QByteArray)),avUI,SLOT(ZSlotFlushWaveAfter(QByteArray)),Qt::AutoConnection);
 
     avUI->showMaximized();
+#endif
+    ZMainTask *mainTask=new ZMainTask;
+    if(mainTask->ZStartTask()<0)
+    {
+        return -1;
+    }
 
     //enter event-loop.
     int ret=app.exec();
 
     //free memory.
-    delete avUI;
-    delete taskAudio;
-    delete taskVideo;
-    delete tcp2UartForward;
-    delete ctlThread;
+    delete mainTask;
 
     return ret;
 }

@@ -29,7 +29,7 @@ public:
     qint32 ZBindMainAuxImgQueue(ZRingBuffer *rbMain,ZRingBuffer *rbAux);
     qint32 ZStartThread();
     qint32 ZStopThread();
-    bool ZIsRunning();
+    bool ZIsExitCleanup();
 protected:
     void run();
 signals:
@@ -110,7 +110,7 @@ private:
     void ZDumpDiffXY2UART(qint32 nDiffX,qint32 nDiffY);
 private:
     QTimer *m_timerProcess;
-    bool m_bRunning;
+    bool m_bCleanup;
 private:
     ZRingBuffer *m_rbMain;
     ZRingBuffer *m_rbAux;

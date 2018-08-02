@@ -8,121 +8,99 @@
 #include <QJsonParseError>
 #include <QDateTime>
 #include <QProcess>
-ZCtlThread::ZCtlThread()
+#if 1
+ZJsonThread::ZJsonThread(qintptr handle,QObject *parent):QThread(parent)
 {
-
+    this->m_handle=handle;
+    this->m_tcpSocket=NULL;
 }
-qint32 ZCtlThread::ZStartThread()
+void ZJsonThread::run()
 {
-    this->m_bExitFlag=false;
-    this->start();
-    return 0;
-}
-qint32 ZCtlThread::ZStopThread()
-{
-    this->m_bExitFlag=true;
-    return 0;
-}
-void ZCtlThread::run()
-{
-    qDebug()<<"<MainLoop>:"<<_CURRENT_DATETIME_<<"CtlThread starts"<<TCP_PORT_CTL<<".";
-    while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
+    qDebug()<<"hello test";
+    this->m_tcpSocket=new QTcpSocket;
+    if(!this->m_tcpSocket->setSocketDescriptor(this->m_handle))
     {
-        QTcpServer *tcpServer=new QTcpServer;
-        int on=1;
-        int sockFd=tcpServer->socketDescriptor();
-        setsockopt(sockFd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on));
-        if(!tcpServer->listen(QHostAddress::Any,TCP_PORT_CTL))
-        {
-            qDebug()<<"<Error>: Ctl server listen error on port:"<<TCP_PORT_CTL;
-            delete tcpServer;
-            break;
-        }
-
-        //wait until get a new connection.
-        while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
-        {
-            //qDebug()<<"wait for tcp connection";
-            if(tcpServer->waitForNewConnection(1000*10))
-            {
-                break;
-            }
-        }
-
-        QTcpSocket *tcpSocket=tcpServer->nextPendingConnection();
-        if(tcpSocket)
-        {
-            //客户端连接上后，就判断服务监听端，这样只允许一个tcp连接.
-            tcpServer->close();
-            //设置连接标志.
-            gGblPara.m_bCtlClientConnected=true;
-
-            qint32 nJsonLen=0;
-            //向客户端发送音频数据包.
-            while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
-            {
-                //read data from tcp and write it to uart.
-                if(tcpSocket->waitForReadyRead(1000))//1000ms.
-                {
-                    //先读4字节的数据长度
-                    if(0==nJsonLen && tcpSocket->bytesAvailable()>4)
-                    {
-                        QByteArray baJsonLen=tcpSocket->read(4);
-                        if(baJsonLen.isEmpty())
-                        {
-                            qDebug()<<"<error>:error when read Ctl socket.";
-                            break;
-                        }
-                        nJsonLen=QByteArrayToqint32(baJsonLen);
-                    }
-                    qDebug()<<nJsonLen;
-                    //如果数据长度为0,则等待下一次再读取
-                    if(nJsonLen<=0)
-                    {
-                        continue;
-                    }
-
-
-                    if(tcpSocket->bytesAvailable()>=nJsonLen)
-                    {
-                        QByteArray baJsonData=tcpSocket->read(nJsonLen);
-                        if(baJsonData.isEmpty())
-                        {
-                            qDebug()<<"<error>:error when read Ctl socket.";
-                            break;
-                        }
-                        qDebug()<<baJsonData;
-                        QJsonParseError jsonErr;
-                        QJsonDocument jsonDoc=QJsonDocument::fromJson(baJsonData,&jsonErr);
-                        if(jsonErr.error==QJsonParseError::NoError)
-                        {
-                            QByteArray baFeedBack=this->ZParseJson(jsonDoc);
-                            if(baFeedBack.size()>0)
-                            {
-                                tcpSocket->write(baFeedBack);
-                                tcpSocket->waitForBytesWritten(1000);
-                            }
-                        }
-                        nJsonLen=0;//reset it.
-                    }
-                }
-                if(tcpSocket->state()!=QAbstractSocket::ConnectedState)
-                {
-                    break;
-                }
-            }
-            tcpSocket->close();
-
-            //设置连接标志.
-            gGblPara.m_bCtlClientConnected=false;
-        }
-        delete tcpServer;
-        tcpServer=NULL;
+        qDebug()<<"<Error>:"<<this->m_tcpSocket->errorString();
+        return;
     }
-    qDebug()<<"<MainLoop>:"<<_CURRENT_DATETIME_<<"CtlThread ends.";
+    //设置连接标志.
+    gGblPara.m_bCtlClientConnected=true;
+    this->m_nJsonLen=0;
+
+    QObject::connect(this->m_tcpSocket,SIGNAL(readyRead()),this,SLOT(ZSlotReadSocketData()),Qt::DirectConnection);
+    QObject::connect(this->m_tcpSocket,SIGNAL(error(QAbstractSocket::SocketError)),this,SLOT(ZSlotSocketErr(QAbstractSocket::SocketError)),Qt::DirectConnection);
+
+    //enter event-loop until exit() is called.
+    this->exec();
+
+    QObject::disconnect(this->m_tcpSocket,SIGNAL(readyRead()),this,SLOT(ZSlotReadSocketData()));
+    QObject::disconnect(this->m_tcpSocket,SIGNAL(error(QAbstractSocket::SocketError)),this,SLOT(ZSlotSocketErr(QAbstractSocket::SocketError)));
+    this->m_tcpSocket->close();
+    delete this->m_tcpSocket;
+    this->m_tcpSocket=NULL;
+
+    //设置断开标志.
+    gGblPara.m_bCtlClientConnected=false;
+    return;
 }
-QByteArray ZCtlThread::ZParseJson(const QJsonDocument &jsonDoc)
+void ZJsonThread::ZSlotReadSocketData()
 {
+    //先读4字节的数据长度
+    if(0==this->m_nJsonLen && this->m_tcpSocket->bytesAvailable()>4)
+    {
+        QByteArray baJsonLen=this->m_tcpSocket->read(4);
+        if(baJsonLen.isEmpty())
+        {
+            qDebug()<<"<Error>:error when read json len.";
+            //exit the event-loop.
+            this->exit(-1);
+            return;
+        }
+        this->m_nJsonLen=QByteArrayToqint32(baJsonLen);
+    }
+    qDebug()<<this->m_nJsonLen;
+    //如果数据长度为0,则等待下一次再读取
+    if(this->m_nJsonLen<=0)
+    {
+        return;
+    }
+
+    if(this->m_tcpSocket->bytesAvailable()>=this->m_nJsonLen)
+    {
+        QByteArray baJsonData=this->m_tcpSocket->read(this->m_nJsonLen);
+        if(baJsonData.isEmpty())
+        {
+            qDebug()<<"<error>:error when read json data.";
+            //exit the event-loop.
+            this->exit(-1);
+            return;
+        }
+        qDebug()<<baJsonData;
+        QJsonParseError jsonErr;
+        QJsonDocument jsonDoc=QJsonDocument::fromJson(baJsonData,&jsonErr);
+        if(jsonErr.error==QJsonParseError::NoError)
+        {
+            QByteArray baFeedBack=this->ZParseJson(jsonDoc);
+            if(baFeedBack.size()>0)
+            {
+                this->m_tcpSocket->write(baFeedBack);
+                this->m_tcpSocket->waitForBytesWritten(100);
+            }
+        }
+
+        //处理完一帧完整的数据后，重置长度.
+        this->m_nJsonLen=0;
+    }
+}
+void ZJsonThread::ZSlotSocketErr(QAbstractSocket::SocketError err)
+{
+    qDebug()<<err;
+    //call exit() to exit event-loop.
+    this->exit(-1);
+}
+QByteArray ZJsonThread::ZParseJson(const QJsonDocument &jsonDoc)
+{
+    bool bWrCfgFileFlag=false;
     QJsonObject jsonObjFeedBack;
     if(jsonDoc.isObject())
     {
@@ -256,10 +234,16 @@ QByteArray ZCtlThread::ZParseJson(const QJsonDocument &jsonDoc)
             QJsonValue val=jsonObj.take("DGain");
             if(val.isString())
             {
-                qint32 dGain=val.toVariant().toInt();
-                qDebug()<<"bevisGrade:"<<dGain;
-                gGblPara.m_audio.m_nGaindB=dGain;
-                jsonObjFeedBack.insert("DGain",QString::number(gGblPara.m_audio.m_nGaindB));
+                QString dGain=val.toVariant().toString();
+                if(dGain=="query")
+                {
+                    jsonObjFeedBack.insert("DGain",QString::number(gGblPara.m_audio.m_nGaindB));
+                }else{
+                    qint32 dGain=val.toVariant().toInt();
+                    qDebug()<<"bevisGrade:"<<dGain;
+                    gGblPara.m_audio.m_nGaindB=dGain;
+                    jsonObjFeedBack.insert("DGain",QString::number(gGblPara.m_audio.m_nGaindB));
+                }
             }
         }
         if(jsonObj.contains("FlushUI"))
@@ -289,6 +273,74 @@ QByteArray ZCtlThread::ZParseJson(const QJsonDocument &jsonDoc)
                 }
             }
         }
+        if(jsonObj.contains("Cam1CenterXY"))
+        {
+            QJsonValue val=jsonObj.take("Cam1CenterXY");
+            if(val.isString())
+            {
+                QString cam1CenterXY=val.toVariant().toString();
+                if(cam1CenterXY=="query")
+                {
+                    jsonObjFeedBack.insert("Cam1CenterXY",QString("%1,%2").arg(gGblPara.m_calibrateX1).arg(gGblPara.m_calibrateY1));
+                }else{
+                    QStringList xyList=cam1CenterXY.split(",");
+                    if(xyList.size()!=2)
+                    {
+                        qDebug()<<"<Error>:failed to parse out (x,y) in Cam1CenterXY json.";
+                    }else{
+                        qint32 x=xyList.at(0).toInt();
+                        qint32 y=xyList.at(1).toInt();
+                        gGblPara.m_calibrateX1=x;
+                        gGblPara.m_calibrateY1=y;
+                        bWrCfgFileFlag=true;
+                        jsonObjFeedBack.insert("Cam1CenterXY",QString("%1,%2").arg(gGblPara.m_calibrateX1).arg(gGblPara.m_calibrateY1));
+                    }
+                }
+            }
+        }
+        if(jsonObj.contains("Cam2CenterXY"))
+        {
+            QJsonValue val=jsonObj.take("Cam2CenterXY");
+            if(val.isString())
+            {
+                QString cam2CenterXY=val.toVariant().toString();
+                if(cam2CenterXY=="query")
+                {
+                    jsonObjFeedBack.insert("Cam2CenterXY",QString("%1,%2").arg(gGblPara.m_calibrateX2).arg(gGblPara.m_calibrateY2));
+                }else{
+                    QStringList xyList=cam2CenterXY.split(",");
+                    if(xyList.size()!=2)
+                    {
+                        qDebug()<<"<Error>:failed to parse out (x,y) in Cam1CenterXY json.";
+                    }else{
+                        qint32 x=xyList.at(0).toInt();
+                        qint32 y=xyList.at(1).toInt();
+                        gGblPara.m_calibrateX2=x;
+                        gGblPara.m_calibrateY2=y;
+                        bWrCfgFileFlag=true;
+                        jsonObjFeedBack.insert("Cam2CenterXY",QString("%1,%2").arg(gGblPara.m_calibrateX2).arg(gGblPara.m_calibrateY2));
+                    }
+                }
+            }
+        }
+        if(jsonObj.contains("Accumulated"))
+        {
+            QJsonValue val=jsonObj.take("Accumulated");
+            if(val.isString())
+            {
+                QString str=val.toVariant().toString();
+                if(str=="query")
+                {
+                    jsonObjFeedBack.insert("Accumulated",QString::number(gGblPara.m_nAccumulatedSec));
+                }else{
+                    qDebug()<<"<Error>:unknow cmd in Accumulated json.";
+                }
+            }
+        }
+        if(bWrCfgFileFlag)
+        {
+            gGblPara.writeCfgFile();
+        }
     }else{
         qDebug()<<"<Error>:CtlThread,failed to parse json.";
     }
@@ -297,3 +349,238 @@ QByteArray ZCtlThread::ZParseJson(const QJsonDocument &jsonDoc)
     QByteArray baFeedBack=jsonDocFeedBack.toJson();
     return baFeedBack;
 }
+ZCtlServer::ZCtlServer()
+{
+    this->m_jsonThread=NULL;
+    int on=1;
+    int sockFd=this->socketDescriptor();
+    setsockopt(sockFd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on));
+}
+qint32 ZCtlServer::ZStartServer()
+{
+    if(!this->listen(QHostAddress::Any,TCP_PORT_CTL))
+    {
+        qDebug()<<"<Error>: Ctl server listen error on port:"<<TCP_PORT_CTL;
+        return -1;
+    }
+    return 0;
+}
+void ZCtlServer::incomingConnection(qintptr socketDescriptor)
+{
+    //同一时刻只允许一个客户端连接，当连接上时，则关闭服务端
+    this->close();
+    qDebug()<<"close server.";
+    //开启处理线程.
+    this->m_jsonThread=new ZJsonThread(socketDescriptor);
+    QObject::connect(this->m_jsonThread,SIGNAL(finished()),this,SLOT(ZSlotJsonThreadFinished()),Qt::AutoConnection);
+    this->m_jsonThread->start();
+}
+void ZCtlServer::ZSlotJsonThreadFinished()
+{
+    delete this->m_jsonThread;
+    this->m_jsonThread=NULL;
+    //重新开启监听.
+    this->ZStartServer();
+    qDebug()<<"reopen server";
+}
+#endif
+
+///////////////////////////////////////////////////////
+/// \brief ZCtlThread::ZCtlThread
+#if 0
+ZCtlThread::ZCtlThread()
+{
+    this->m_bExitFlag=false;
+    this->m_bCleanup=false;
+}
+qint32 ZCtlThread::ZStartThread()
+{
+    this->m_bExitFlag=false;
+    this->start();
+    return 0;
+}
+qint32 ZCtlThread::ZStopThread()
+{
+    this->m_bExitFlag=true;
+    return 0;
+}
+void ZCtlThread::run()
+{
+    qDebug()<<"<MainLoop>:"<<_CURRENT_DATETIME_<<"CtlThread starts"<<TCP_PORT_CTL<<".";
+    this->m_bCleanup=false;
+    while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
+    {
+        this->m_tcpServer=new QTcpServer(this);
+        int on=1;
+        int sockFd=this->m_tcpServer->socketDescriptor();
+        setsockopt(sockFd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on));
+        if(!this->m_tcpServer->listen(QHostAddress::Any,TCP_PORT_CTL))
+        {
+            qDebug()<<"<Error>: Ctl server listen error on port:"<<TCP_PORT_CTL;
+            delete this->m_tcpServer;
+            break;
+        }
+        QObject::connect(this->m_tcpServer,SIGNAL(newConnection()),this,SLOT(ZSlotNewConnection()));
+        QObject::connect(this->m_tcpServer,SIGNAL(acceptError(QAbstractSocket::SocketError)),this,SLOT(ZSlotAcceptErr(QAbstractSocket::SocketError)));
+        //enter event-loop until exit() is called.
+        this->exec();
+        QObject::disconnect(this->m_tcpServer,SIGNAL(newConnection()),this,SLOT(ZSlotNewConnection()));
+        QObject::disconnect(this->m_tcpServer,SIGNAL(acceptError(QAbstractSocket::SocketError)),this,SLOT(ZSlotAcceptErr(QAbstractSocket::SocketError)));
+        delete this->m_tcpServer;
+        this->m_tcpServer=NULL;
+    }
+    qDebug()<<"<MainLoop>:"<<_CURRENT_DATETIME_<<"CtlThread ends.";
+    emit this->ZSigThreadExited();
+    this->m_bCleanup=true;
+    return;
+    /////////////////////////////////////////////////////
+#if 0
+    qDebug()<<"<MainLoop>:"<<_CURRENT_DATETIME_<<"CtlThread starts"<<TCP_PORT_CTL<<".";
+    this->m_bCleanup=false;
+    while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
+    {
+        QTcpServer *tcpServer=new QTcpServer;
+        int on=1;
+        int sockFd=tcpServer->socketDescriptor();
+        setsockopt(sockFd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on));
+        if(!tcpServer->listen(QHostAddress::Any,TCP_PORT_CTL))
+        {
+            qDebug()<<"<Error>: Ctl server listen error on port:"<<TCP_PORT_CTL;
+            delete tcpServer;
+            break;
+        }
+
+        //wait until get a new connection.
+        while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
+        {
+            //qDebug()<<"wait for tcp connection";
+            if(tcpServer->waitForNewConnection(1000*10))
+            {
+                break;
+            }
+        }
+
+        QTcpSocket *tcpSocket=tcpServer->nextPendingConnection();
+        if(tcpSocket)
+        {
+            //客户端连接上后，就判断服务监听端，这样只允许一个tcp连接.
+            tcpServer->close();
+            //设置连接标志.
+            gGblPara.m_bCtlClientConnected=true;
+
+            qint32 nJsonLen=0;
+            //向客户端发送音频数据包.
+            while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
+            {
+                //read data from tcp and write it to uart.
+                if(tcpSocket->waitForReadyRead(1000))//1000ms.
+                {
+                    //先读4字节的数据长度
+                    if(0==nJsonLen && tcpSocket->bytesAvailable()>4)
+                    {
+                        QByteArray baJsonLen=tcpSocket->read(4);
+                        if(baJsonLen.isEmpty())
+                        {
+                            qDebug()<<"<error>:error when read Ctl socket.";
+                            break;
+                        }
+                        nJsonLen=QByteArrayToqint32(baJsonLen);
+                    }
+                    qDebug()<<nJsonLen;
+                    //如果数据长度为0,则等待下一次再读取
+                    if(nJsonLen<=0)
+                    {
+                        continue;
+                    }
+
+
+                    if(tcpSocket->bytesAvailable()>=nJsonLen)
+                    {
+                        QByteArray baJsonData=tcpSocket->read(nJsonLen);
+                        if(baJsonData.isEmpty())
+                        {
+                            qDebug()<<"<error>:error when read Ctl socket.";
+                            break;
+                        }
+                        qDebug()<<baJsonData;
+                        QJsonParseError jsonErr;
+                        QJsonDocument jsonDoc=QJsonDocument::fromJson(baJsonData,&jsonErr);
+                        if(jsonErr.error==QJsonParseError::NoError)
+                        {
+                            QByteArray baFeedBack=this->ZParseJson(jsonDoc);
+                            if(baFeedBack.size()>0)
+                            {
+                                tcpSocket->write(baFeedBack);
+                                tcpSocket->waitForBytesWritten(1000);
+                            }
+                        }
+                        nJsonLen=0;//reset it.
+                    }
+                }
+                if(tcpSocket->state()!=QAbstractSocket::ConnectedState)
+                {
+                    break;
+                }
+            }
+            tcpSocket->close();
+
+            //设置连接标志.
+            gGblPara.m_bCtlClientConnected=false;
+        }
+        delete tcpServer;
+        tcpServer=NULL;
+    }
+    qDebug()<<"<MainLoop>:"<<_CURRENT_DATETIME_<<"CtlThread ends.";
+    emit this->ZSigThreadExited();
+    this->m_bCleanup=true;
+    return;
+#endif
+}
+void ZCtlThread::ZSlotAcceptErr(QAbstractSocket::SocketError err)
+{
+    qDebug()<<err;
+    //exit the event loop.
+    this->exit(-1);
+}
+void ZCtlThread::ZSlotNewConnection()
+{
+    this->m_tcpSocket=this->m_tcpServer->nextPendingConnection();
+    if(this->m_tcpSocket)
+    {
+        //客户端连接上后，就判断服务监听端，这样只允许一个tcp连接.
+        this->m_tcpServer->close();
+        //设置连接标志.
+        gGblPara.m_bCtlClientConnected=true;
+
+        //initial json length.
+        this->m_nJsonLen=0;
+        //make connection.
+        QObject::connect(this->m_tcpSocket,SIGNAL(readyRead()),this,SLOT(ZSlotReadSocketData()));
+        QObject::connect(this->m_tcpSocket,SIGNAL(error(QAbstractSocket::SocketError)),this,SLOT(ZSlotSocketErr(QAbstractSocket::SocketError)));
+    }
+}
+void ZCtlThread::ZSlotReadSocketData()
+{
+
+}
+void ZCtlThread::ZSlotSocketErr(QAbstractSocket::SocketError err)
+{
+    qDebug()<<err;
+    //close socket.
+    QObject::disconnect(this->m_tcpSocket,SIGNAL(readyRead()),this,SLOT(ZSlotReadSocketData()));
+    QObject::disconnect(this->m_tcpSocket,SIGNAL(error(QAbstractSocket::SocketError)),this,SLOT(ZSlotSocketErr(QAbstractSocket::SocketError)));
+
+    this->m_tcpSocket->close();
+    delete this->m_tcpSocket;
+    this->m_tcpSocket=NULL;
+    //设置断开标志.
+    gGblPara.m_bCtlClientConnected=false;
+    //exit the event-loop.
+    this->exit(-1);
+}
+
+bool ZCtlThread::ZIsExitCleanup()
+{
+    return this->m_bCleanup;
+}
+#endif

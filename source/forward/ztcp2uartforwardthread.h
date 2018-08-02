@@ -11,12 +11,15 @@ public:
     ZTcp2UartForwardThread();
     qint32 ZStartThread();
     qint32 ZStopThread();
+
+    bool ZIsExitCleanup();
 signals:
     void ZSigThreadFinished();
 protected:
     void run();
 private:
     bool m_bExitFlag;
+    bool m_bCleanup;
 };
 
 #endif // ZTCP2UARTFORWARDTHREAD_H

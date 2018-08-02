@@ -15,6 +15,7 @@ public:
     ZAudioTxThread();
     qint32 ZStartThread(ZRingBuffer *rbTx);
     qint32 ZStopThread();
+    bool ZIsExitCleanup();
 signals:
     void ZSigThreadFinished();
 protected:
@@ -22,5 +23,6 @@ protected:
 private:
     ZRingBuffer *m_rbTx;
     bool m_bExitFlag;
+    bool m_bCleanup;
 };
 #endif // ZAUDIOTXTHREAD_H

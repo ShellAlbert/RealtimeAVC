@@ -112,8 +112,7 @@ ZAVUI::ZAVUI(QWidget *parent):QFrame(parent)
 
     this->setStyleSheet("QFrame{background-color:#84C1FF;}");
 
-    //running time.
-    this->m_nTimeCnt=0;
+    //accumulated running time.
     this->m_timer=new QTimer;
     QObject::connect(this->m_timer,SIGNAL(timeout()),this,SLOT(ZSlot1sTimeout()));
     this->m_timer->start(1000);
@@ -178,9 +177,11 @@ void ZAVUI::ZSlotSSIMImgSimilarity(qint32 nVal)
 }
 void ZAVUI::ZSlot1sTimeout()
 {
-    this->m_nTimeCnt++;
+    //accumulated run seocnds.
+    gGblPara.m_nAccumulatedSec++;
+
     //convert sec to h/m/s.
-    qint32 nReaningSec=this->m_nTimeCnt;
+    qint32 nReaningSec=gGblPara.m_nAccumulatedSec;
     qint32 nHour,nMinute,nSecond;
     nHour=nReaningSec/3600;
     nReaningSec=nReaningSec%3600;

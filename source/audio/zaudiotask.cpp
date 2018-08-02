@@ -8,33 +8,19 @@ ZAudioTask::ZAudioTask(QObject *parent):QObject(parent)
 
     this->m_timer=NULL;
 
-    //noise queue.
-    //capture thread -> noise cut thread.
     this->m_rbNoise=NULL;
-
-    //clear queue.
-    //noise cut thread -> play thread.
-    this->m_rbClear=NULL;
-
-    //encode queue.
-    //noise cut thread -> encode thread.
-    this->m_rbEncode=NULL;
-
-    //tx queue.
-    //h264 encode thread -> tcp tx thread.
+    this->m_rbPlay=NULL;
     this->m_rbTx=NULL;
 
-    //capture-process-playback mode.
+    //capture-process-playback/tcp tx mode.
     this->m_capThread=NULL;
     this->m_cutThread=NULL;
     this->m_playThread=NULL;
-    this->m_pcmEncThread=NULL;
     this->m_txThread=NULL;
 }
 
 ZAudioTask::~ZAudioTask()
 {
-    this->m_timer->stop();
     delete this->m_timer;
 
     //capture-process-playback mode.
@@ -49,10 +35,6 @@ ZAudioTask::~ZAudioTask()
     if(this->m_playThread!=NULL)
     {
         delete this->m_playThread;
-    }
-    if(this->m_pcmEncThread!=NULL)
-    {
-        delete this->m_pcmEncThread;
     }
     if(this->m_txThread!=NULL)
     {
@@ -75,43 +57,28 @@ qint32 ZAudioTask::ZStartTask()
     QObject::connect(this->m_timer,SIGNAL(timeout()),this,SLOT(ZSlotTimeout()));
     this->m_timer->start(5000);
 
-    //noise queue.
-    //capture thread -> noise cut thread.
-    this->m_rbNoise=new ZRingBuffer(30,BLOCK_SIZE);
+    //noise queue for capture thread -> noise cut thread.
+    this->m_rbNoise=new ZRingBuffer(MAX_AUDIO_RING_BUFFER,BLOCK_SIZE);
 
-    //clear queue.
-    //noise cut thread -> play thread.
-    this->m_rbClear=new ZRingBuffer(30,BLOCK_SIZE);
+    //play queue for noise cut thread -> play thread.
+    this->m_rbPlay=new ZRingBuffer(MAX_AUDIO_RING_BUFFER,BLOCK_SIZE);
 
-    //encode queue.
-    //noise cut thread -> encode thread.
-    this->m_rbEncode=new ZRingBuffer(30,BLOCK_SIZE);
+    //tx queue for noise cut thread -> tcp tx thread.
+    this->m_rbTx=new ZRingBuffer(MAX_AUDIO_RING_BUFFER,BLOCK_SIZE);
 
-    //tx queue.
-    //h264 encode thread -> tcp tx thread.
-    this->m_rbTx=new ZRingBuffer(30,BLOCK_SIZE);
-
-    //CaptureThread -> queueNoise -> NoiseCutThread  -> queueEncode -> PcmEncThread -> queueTCP -> TcpDumpThread.
-    //                                               -> queueClear  -> PlaybackThread.
-
-
-    //create capture thread.
+    //Audio Capture --noise queue-->  Noise Cut --play queue--> Local Play.
+    //                                          -- tx queue --> Tcp Tx.
     this->m_capThread=new ZAudioCaptureThread(gGblPara.m_audio.m_capCardName,false);
     QObject::connect(this->m_capThread,SIGNAL(ZSigThreadFinished()),this,SLOT(ZSlotCheckExitFlag()));
 
     //create noise cut thread.
     this->m_cutThread=new ZNoiseCutThread;
-    this->m_cutThread->ZBindWaveFormQueueBefore(this->m_rbWaveBefore);
-    this->m_cutThread->ZBindWaveFormQueueAfter(this->m_rbWaveAfter);
+    this->m_cutThread->ZBindWaveFormQueue(this->m_rbWaveBefore,this->m_rbWaveAfter);
     QObject::connect(this->m_cutThread,SIGNAL(ZSigThreadFinished()),this,SLOT(ZSlotCheckExitFlag()));
 
     //create playback thread.
     this->m_playThread=new ZAudioPlayThread(gGblPara.m_audio.m_playCardName);
     QObject::connect(this->m_playThread,SIGNAL(ZSigThreadFinished()),this,SLOT(ZSlotCheckExitFlag()));
-
-    //pcm encode thread.
-    this->m_pcmEncThread=new ZPCMEncThread;
-    connect(this->m_pcmEncThread,SIGNAL(ZSigThreadFinished()),this,SLOT(ZSlotCheckExitFlag()));
 
     //tcp tx thread.
     this->m_txThread=new ZAudioTxThread;
@@ -119,11 +86,8 @@ qint32 ZAudioTask::ZStartTask()
 
     //start thread.
     this->m_capThread->ZStartThread(this->m_rbNoise);
-    this->m_cutThread->ZStartThread(this->m_rbNoise,this->m_rbClear,this->m_rbEncode);
-    this->m_playThread->ZStartThread(this->m_rbClear);
-    //////////////////////////////////////////////////////////////////////////////////////////////////
-    this->m_pcmEncThread->ZStartThread(this->m_rbEncode,this->m_rbTx);
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////
+    this->m_cutThread->ZStartThread(this->m_rbNoise,this->m_rbPlay,this->m_rbTx);
+    this->m_playThread->ZStartThread(this->m_rbPlay);
     this->m_txThread->ZStartThread(this->m_rbTx);
     return 0;
 }
@@ -133,25 +97,9 @@ ZNoiseCutThread* ZAudioTask::ZGetNoiseCutThread()
 }
 void ZAudioTask::ZSlotCheckExitFlag()
 {
-
-    if(gGblPara.m_audio.m_bCapThreadExitFlag && gGblPara.m_audio.m_bCutThreadExitFlag && ///<
-            gGblPara.m_audio.m_bPlayThreadExitFlag && gGblPara.m_audio.m_bPCMEncThreadExitFlag && ///<
-            gGblPara.m_audio.m_bTcpTxThreadExitFlag)
+    if(!this->m_timer->isActive())
     {
-        this->m_capThread->quit();
-        this->m_capThread->wait(1000);
-
-        this->m_cutThread->quit();
-        this->m_cutThread->wait(1000);
-
-        this->m_playThread->quit();
-        this->m_playThread->wait(1000);
-
-        this->m_pcmEncThread->quit();
-        this->m_pcmEncThread->wait(1000);
-
-        this->m_txThread->quit();
-        this->m_txThread->wait(1000);
+        this->m_timer->start(1000);
     }
 }
 void ZAudioTask::ZSlotTimeout()
@@ -162,6 +110,107 @@ void ZAudioTask::ZSlotTimeout()
         this->m_nPlayUnderrun=gGblPara.m_audio.m_nPlayUnderrun;
         qDebug("<Warning>: Capture Overrun:%d(queue:%d),Playback Underrun:%d(queue:%d).",///<
                this->m_nCapOverrun,this->m_rbNoise->ZGetValidNum(),///<
-               this->m_nPlayUnderrun,this->m_rbClear->ZGetValidNum());
+               this->m_nPlayUnderrun,this->m_rbPlay->ZGetValidNum());
     }
+    //如果检测到全局请求退出标志，则清空所有队列，唤醒所有子线程。
+    if(gGblPara.m_bGblRst2Exit)
+    {
+        //如果CapThread没有退出，可能noise queue队列满,则模拟NoiseCut线程出队一个音频帧，解除阻塞.
+        if(!this->m_capThread->ZIsExitCleanup())
+        {
+            qDebug()<<"wait for audio cap thread";
+            if(this->m_rbNoise->ZGetValidNum()==MAX_AUDIO_RING_BUFFER)
+            {
+                this->m_rbNoise->m_semaUsed->acquire();
+                //this->m_rbNoise->ZGetElement(NULL,0);//出列数据无用，所以这里并不真取。
+                this->m_rbNoise->m_semaFree->release();
+            }
+        }
+
+        //如果NoiseCut没有退出，可能noise queue队列空，则模拟CapThread入队一个静音数据，解除阻塞。
+        //也有可能是play queue满造成的阻塞，则模拟play thread取出一帧数据，解除阻塞。
+        if(!this->m_cutThread->ZIsExitCleanup())
+        {
+            qDebug()<<"wait for audio cut thread";
+            if(this->m_rbNoise->ZGetValidNum()==0)
+            {
+                qint8 *pMuteData=new qint8[BLOCK_SIZE];
+                memset(pMuteData,0,BLOCK_SIZE);
+
+                this->m_rbNoise->m_semaFree->acquire();
+                this->m_rbNoise->ZPutElement(pMuteData,BLOCK_SIZE);
+                this->m_rbNoise->m_semaUsed->release();
+
+                delete  [] pMuteData;
+            }
+            if(this->m_rbPlay->ZGetValidNum()==MAX_AUDIO_RING_BUFFER)
+            {
+                this->m_rbPlay->m_semaUsed->acquire();
+                //this->m_rbPlay->ZGetElement(NULL,0);//出列数据无用，所以这里并不真取。
+                this->m_rbPlay->m_semaFree->release();
+            }
+        }
+
+        //如果play thread没有退出，可能play queue队列空，则模拟noise cut投入一个静音数据，解除阻塞。
+        if(!this->m_playThread->ZIsExitCleanup())
+        {
+            qDebug()<<"wait for audio play thread";
+            if(this->m_rbPlay->ZGetValidNum()==0)
+            {
+                qint8 *pMuteData=new qint8[BLOCK_SIZE];
+                memset(pMuteData,0,BLOCK_SIZE);
+
+                this->m_rbPlay->m_semaFree->acquire();
+                this->m_rbPlay->ZPutElement(pMuteData,BLOCK_SIZE);
+                this->m_rbPlay->m_semaUsed->release();
+
+                delete  [] pMuteData;
+            }
+        }
+
+        //如果TxThread没有退出，可能tx queue队列空，则模拟noise cut投入一个静音数据，解除阻塞。
+        if(!this->m_txThread->ZIsExitCleanup())
+        {
+            qDebug()<<"wait for audio tx thread";
+            if(this->m_rbTx->ZGetValidNum()==0)
+            {
+                qint8 *pMuteData=new qint8[BLOCK_SIZE];
+                memset(pMuteData,0,BLOCK_SIZE);
+
+                this->m_rbTx->m_semaFree->acquire();
+                this->m_rbTx->ZPutElement(pMuteData,BLOCK_SIZE);
+                this->m_rbTx->m_semaUsed->release();
+
+                delete  [] pMuteData;
+            }
+        }
+
+        //当所有的子线程都退出时，则音频任务退出。
+        if(this->ZIsExitCleanup())
+        {
+            this->m_timer->stop();
+            emit this->ZSigAudioTaskExited();
+        }
+    }
+}
+bool ZAudioTask::ZIsExitCleanup()
+{
+    bool bAllCleanup=true;
+    if(!this->m_capThread->ZIsExitCleanup())
+    {
+        bAllCleanup=false;
+    }
+    if(!this->m_cutThread->ZIsExitCleanup())
+    {
+        bAllCleanup=false;
+    }
+    if(!this->m_playThread->ZIsExitCleanup())
+    {
+        bAllCleanup=false;
+    }
+    if(!this->m_txThread->ZIsExitCleanup())
+    {
+        bAllCleanup=false;
+    }
+    return bAllCleanup;
 }

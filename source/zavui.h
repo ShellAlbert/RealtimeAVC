@@ -44,7 +44,6 @@ private:
     //程序累计运行时间.
     QLabel *m_llRunSec;
     QTimer *m_timer;
-    qint64 m_nTimeCnt;
     //算法当前状态，开启/关闭.
     QLabel *m_llState;
     //透传数据统计Android(tcp) <--> STM32(uart).

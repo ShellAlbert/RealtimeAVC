@@ -76,7 +76,8 @@ SOURCES += \
     zavui.cpp \
     xyseriesiodevice.cpp \
     audio/zaudiotxthread.cpp \
-    zringbuffer.cpp
+    zringbuffer.cpp \
+    zmaintask.cpp
 
 
 HEADERS += \
@@ -124,7 +125,8 @@ HEADERS += \
     zavui.h \
     xyseriesiodevice.h \
     audio/zaudiotxthread.h \
-    zringbuffer.h
+    zringbuffer.h \
+    zmaintask.h
 
 
 
@@ -150,5 +152,11 @@ LIBS += -L/home/zhangshaoyan/armbuild/libopus4arm/lib -lopus
 INCLUDEPATH += /home/zhangshaoyan/armbuild/librnnoise4arm/include
 LIBS += -L/home/zhangshaoyan/armbuild/librnnoise4arm/lib -lrnnoise
 
+#GStreamer.
+INCLUDEPATH += /home/zhangshaoyan/armbuild/copyfromrk3399ubuntu1804/include/glib-2.0
+INCLUDEPATH += /home/zhangshaoyan/armbuild/copyfromrk3399ubuntu1804/arm-linux-gnueabihf/glib-2.0/include
+INCLUDEPATH += /home/zhangshaoyan/armbuild/copyfromrk3399ubuntu1804/include/gstreamer-1.0
+QMAKE_LFLAGS += -Wl,-rpath-link=/home/zhangshaoyan/armbuild/copyfromrk3399ubuntu1804/arm-linux-gnueabihf
+LIBS += -L/home/zhangshaoyan/armbuild/copyfromrk3399ubuntu1804/arm-linux-gnueabihf -lpthread -lglib-2.0 -lgobject-2.0 -lgstreamer-1.0
 RESOURCES += \
     resource.qrc

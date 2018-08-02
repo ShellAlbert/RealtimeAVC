@@ -39,29 +39,29 @@ void s16_to_f32(float *pOut,const int16_t *pIn,size_t sampleCount)
 }
 ZNoiseCutThread::ZNoiseCutThread()
 {
-
+    this->m_bCleanup=true;
 }
-qint32 ZNoiseCutThread::ZBindWaveFormQueueBefore(ZRingBuffer *rbWave)
+qint32 ZNoiseCutThread::ZBindWaveFormQueue(ZRingBuffer *rbWaveBefore,ZRingBuffer *rbWaveAfter)
 {
-    this->m_rbWaveBefore=rbWave;
+    this->m_rbWaveBefore=rbWaveBefore;
+    this->m_rbWaveAfter=rbWaveAfter;
     return 0;
 }
-qint32 ZNoiseCutThread::ZBindWaveFormQueueAfter(ZRingBuffer *rbWave)
-{
-    this->m_rbWaveAfter=rbWave;
-    return 0;
-}
-qint32 ZNoiseCutThread::ZStartThread(ZRingBuffer *rbNoise,ZRingBuffer *rbClear,ZRingBuffer *rbEncode)
+qint32 ZNoiseCutThread::ZStartThread(ZRingBuffer *rbNoise,ZRingBuffer *rbPlay,ZRingBuffer *rbTx)
 {
     this->m_rbNoise=rbNoise;
-    this->m_rbClear=rbClear;
-    this->m_rbEncode=rbEncode;
+    this->m_rbPlay=rbPlay;
+    this->m_rbTx=rbTx;
     this->start();
     return 0;
 }
 qint32 ZNoiseCutThread::ZStopThread()
 {
     return 0;
+}
+bool ZNoiseCutThread::ZIsExitCleanup()
+{
+    return this->m_bCleanup;
 }
 void ZNoiseCutThread::run()
 {
@@ -143,7 +143,6 @@ void ZNoiseCutThread::run()
     //这个变量用于控制通过json动态调整增益.
     qint32 nGaindBShadow=gGblPara.m_audio.m_nGaindB;
 
-
     //bevis.
     qint32 nBevisRemaingBytes=0;
     _WINDNSManager bevis;
@@ -151,21 +150,18 @@ void ZNoiseCutThread::run()
     //de-noise grade:0/1/2/3.
     bevis.vp_setwindnsmode(gGblPara.m_audio.m_nBevisGrade);
 
-    qDebug()<<"<MainLoop>:NoiseSuppressThread starts.";
-
     char *pRNNoiseBuffer=new char[FRAME_SIZE];
     qint32 nRNNoiseBufLen=0;
     //脏音频数据（未经过降噪处理的原始采样数据）.
     QByteArray *baPCMData=new QByteArray(BLOCK_SIZE,0);
     qint32 nPCMDataLen=0;
+
+    qDebug()<<"<MainLoop>:NoiseSuppressThread starts.";
+    this->m_bCleanup=false;
     while(!gGblPara.m_bGblRst2Exit)
     {
         //fetch noise pcm data from noise queue.
-        if(!this->m_rbNoise->m_semaUsed->tryAcquire())
-        {
-            this->usleep(AUDIO_THREAD_SCHEDULE_US);
-            continue;
-        }
+        this->m_rbNoise->m_semaUsed->acquire();
         nPCMDataLen=this->m_rbNoise->ZGetElement((qint8*)baPCMData->data(),baPCMData->size());
         this->m_rbNoise->m_semaFree->release();
         if(nPCMDataLen<=0)
@@ -310,7 +306,6 @@ void ZNoiseCutThread::run()
             }
         }
 
-#if 1
         //Automatic gain control from WebRTC for all algorithms.
         if(nGaindBShadow!=gGblPara.m_audio.m_nGaindB)
         {
@@ -363,46 +358,21 @@ void ZNoiseCutThread::run()
                 nRemaingBytes-=len;
             }
         }
-#endif
 
-        //try to put denoise data to clear queue for local playback,超时10ms*10=100ms.
-        qint32 nTryTimes=0;
-        do{
-            if(this->m_rbClear->m_semaFree->tryAcquire())//空闲信号量减1,这里使用try防止阻塞.
-            {
-                this->m_rbClear->ZPutElement((qint8*)baPCMData->data(),nPCMDataLen);
-                this->m_rbClear->m_semaUsed->release();//已用信号量加1.
-                break;
-            }
-            if(nTryTimes++>10)
-            {
-                qDebug()<<"<Error>:NoiseCut,timeout to put denoise pcm data to clear queue,trash this frame.";
-                break;
-            }
-            qDebug()<<"<Warning>:NoiseCut clear queue is full,try times "<<nTryTimes<<".";
-            this->usleep(AUDIO_THREAD_SCHEDULE_US);
-        }while(1);
+        //try to put denoise data to play queue for local playback,超时10ms*10=100ms.
+        this->m_rbPlay->m_semaFree->acquire();
+        this->m_rbPlay->ZPutElement((qint8*)baPCMData->data(),nPCMDataLen);
+        this->m_rbPlay->m_semaUsed->release();
 
-        //try to put denoise data into encode queue for tcp transfer.
-        //当有客户端连接上时，才将采集到的数据放到编码队列，否则并不投入数据,超时10ms*10=100ms.
+        //当有客户端连接上时，才将采集到的数据放到发送队列.
+        //如果TCP传输速度慢，则会导致发送队列满，所以这里使用try防止本地阻塞，可能造成音频丢帧现象。
         if(gGblPara.m_audio.m_bAudioTcpConnected)
         {
-            do{
-                qint32 nTryTimes=0;
-                if(this->m_rbEncode->m_semaFree->tryAcquire())//空闲信号量减1,这里使用try防止阻塞.
-                {
-                    this->m_rbEncode->ZPutElement((qint8*)baPCMData->data(),nPCMDataLen);
-                    this->m_rbEncode->m_semaUsed->release();//已用信号量加1.
-                    break;
-                }
-                if(nTryTimes++>10)
-                {
-                    qDebug()<<"<Error>:NoiseCut,timeout to put denoise pcm data to encode queue,trash this frame.";
-                    break;
-                }
-                qDebug()<<"<Warning>:NoiseCut encode queue is full,try times "<<nTryTimes<<".";
-                this->usleep(AUDIO_THREAD_SCHEDULE_US);
-            }while(1);
+            if(this->m_rbTx->m_semaFree->tryAcquire())
+            {
+                this->m_rbTx->ZPutElement((qint8*)baPCMData->data(),nPCMDataLen);
+                this->m_rbTx->m_semaUsed->release();
+            }
         }
 
         //尝试将未处理过的数据投入after队列，用于本地波形显示,超时10ms*10=100ms.
@@ -410,25 +380,6 @@ void ZNoiseCutThread::run()
         {
             QByteArray baPCM(baPCMData->data(),nPCMDataLen);
             emit this->ZSigNewWaveAfterArrived(baPCM);
-#if 0
-            qint32 nTryTimes=0;
-            do{
-                if(this->m_rbWaveAfter->m_semaFree->tryAcquire())
-                {
-                    this->m_rbWaveAfter->ZPutElement((qint8*)baPCMData->data(),nPCMDataLen);
-                    this->m_rbWaveAfter->m_semaUsed->release();
-                    emit this->ZSigNewWaveAfterArrived();
-                    break;
-                }
-                if(nTryTimes++>10)
-                {
-                    qDebug()<<"<Error>:NoiseCut,timeout to put pcm to wavAfter queue,trash it.";
-                    break;
-                }
-                qDebug()<<"<Warning>:NoiseCut wavAfter queue is full,try times "<<nTryTimes<<".";
-                this->usleep(AUDIO_THREAD_SCHEDULE_US);
-            }while(1);
-#endif
         }
     }
     rnnoise_destroy(st);
@@ -438,11 +389,9 @@ void ZNoiseCutThread::run()
     delete [] pFilterBuffer;
 
     qDebug()<<"<MainLoop>:NoiseSuppressThread ends.";
-    //set exit flag to help other thread to exit.
-    gGblPara.m_audio.m_bCutThreadExitFlag=true;
     //set global request to exit flag to help other thread to exit.
     gGblPara.m_bGblRst2Exit=true;
     emit this->ZSigThreadFinished();
-
+    this->m_bCleanup=true;
     return;
 }

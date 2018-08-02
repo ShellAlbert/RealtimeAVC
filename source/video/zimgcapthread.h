@@ -26,7 +26,8 @@ public:
     qint32 ZGetCAMImgFps();
 
     QString ZGetDevName();
-    bool ZIsRunning();
+
+    bool ZIsExitCleanup();
 signals:
     void ZSigNewImgArrived(QImage img);
     void ZSigMsg(const QString &msg,const qint32 &type);
@@ -47,5 +48,6 @@ private:
     bool m_bMainCamera;
 private:
     bool m_bExitFlag;
+    bool m_bCleanup;
 };
 #endif // ZIMGCAPTHREAD_H

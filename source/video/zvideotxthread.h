@@ -12,17 +12,19 @@ class ZVideoTxThread : public QThread
     Q_OBJECT
 public:
     ZVideoTxThread(qint32 nTcpPort);
-    qint32 ZBindQueue(ZRingBuffer *rbH264);
+    qint32 ZBindQueue(ZRingBuffer *rbYUV);
     qint32 ZStartThread();
     qint32 ZStopThread();
+    bool ZIsExitCleanup();
 signals:
     void ZSigThreadFinished();
 
 protected:
     void run();
 private:
-    ZRingBuffer *m_rbH264;
+    ZRingBuffer *m_rbYUV;
     bool m_bExitFlag;
+    bool m_bCleanup;
     qint32 m_nTcpPort;
 };
 

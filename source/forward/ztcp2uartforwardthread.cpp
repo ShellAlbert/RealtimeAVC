@@ -7,6 +7,7 @@
 ZTcp2UartForwardThread::ZTcp2UartForwardThread()
 {
     this->m_bExitFlag=false;
+    this->m_bCleanup=false;
 }
 qint32 ZTcp2UartForwardThread::ZStartThread()
 {
@@ -34,11 +35,13 @@ void ZTcp2UartForwardThread::run()
         //此处设置全局请求退出标志,请求其他线程退出.
         gGblPara.m_bGblRst2Exit=true;
         delete uart;
+        this->m_bCleanup=true;
         return;
     }
 
     qDebug()<<"<MainLoop>:Tcp2UartThread starts.";
-    while(!gGblPara.m_bGblRst2Exit || !this->m_bExitFlag)
+    this->m_bCleanup=false;
+    while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
     {
         QTcpServer *tcpServer=new QTcpServer;
         int on=1;
@@ -53,7 +56,7 @@ void ZTcp2UartForwardThread::run()
         }
         qDebug()<<"<Tcp2Uart>: listen on tcp "<<TCP_PORT_FORWARD;
         //wait until get a new connection.
-        while(!gGblPara.m_bGblRst2Exit || !this->m_bExitFlag)
+        while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
         {
             //qDebug()<<"wait for tcp connection";
             if(tcpServer->waitForNewConnection(1000*10))
@@ -72,7 +75,7 @@ void ZTcp2UartForwardThread::run()
             qDebug()<<"Tcp2Uart connected.";
 
             //向客户端发送音频数据包.
-            while(!gGblPara.m_bGblRst2Exit || !this->m_bExitFlag)
+            while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
             {
                 //read data from tcp and write it to uart.
                 if(tcpSocket->waitForReadyRead(100))//100ms.
@@ -124,5 +127,10 @@ void ZTcp2UartForwardThread::run()
     gGblPara.m_bTcp2UartThreadExitFlag=true;
     gGblPara.m_bGblRst2Exit=true;
     emit this->ZSigThreadFinished();
+    this->m_bCleanup=true;
     return;
+}
+bool ZTcp2UartForwardThread::ZIsExitCleanup()
+{
+    return this->m_bCleanup;
 }

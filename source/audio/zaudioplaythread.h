@@ -17,9 +17,9 @@ public:
     ZAudioPlayThread(QString playCardName);
     ~ZAudioPlayThread();
 
-    qint32 ZStartThread(ZRingBuffer *rbClear);
+    qint32 ZStartThread(ZRingBuffer *rbPlay);
     qint32 ZStopThread();
-    bool ZIsRunning();
+    bool ZIsExitCleanup();
 protected:
     void run();
 signals:
@@ -28,12 +28,13 @@ private:
     quint64 ZGetTimestamp();
 private:
     bool m_bExitFlag;
+    bool m_bCleanup;
 
     QTimer *m_timerPlay;
 private:
     QString m_playCardName;
     snd_pcm_t *m_pcmHandle;
-    ZRingBuffer *m_rbClear;
+    ZRingBuffer *m_rbPlay;
     char *m_pcmBuffer;
 };
 

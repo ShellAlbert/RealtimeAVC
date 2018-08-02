@@ -5,7 +5,7 @@
 #include <audio/zaudiocapturethread.h>
 #include <audio/znoisecutthread.h>
 #include <audio/zaudioplaythread.h>
-#include <audio/zpcmencthread.h>
+//#include <audio/zpcmencthread.h>
 #include <audio/zaudiotxthread.h>
 #include <QSemaphore>
 #include <QQueue>
@@ -23,25 +23,23 @@ public:
      qint32 ZStartTask();
 
      ZNoiseCutThread* ZGetNoiseCutThread();
+     bool ZIsExitCleanup();
+signals:
+     void ZSigAudioTaskExited();
 private slots:
     void ZSlotCheckExitFlag();
     void ZSlotTimeout();
 private:
+    //Audio Capture --noise queue-->  Noise Cut --play queue--> Local Play.
+    //                                          -- tx queue --> Tcp Tx.
     ZAudioCaptureThread *m_capThread;
     ZNoiseCutThread *m_cutThread;
     ZAudioPlayThread *m_playThread;
-    ZPCMEncThread *m_pcmEncThread;
     ZAudioTxThread *m_txThread;
 
-    //CaptureThread capture pcm data and put then into NoiseQueue.
+    //ringBuffer.
     ZRingBuffer *m_rbNoise;
-
-    //NoiseCutThread get data from NoiseQueue and do noise cut then put them into ClearQueue&EncodeQueue.
-    //PlayThread get data from ClearQueue and write pcm data to hardware.
-    //EncodeThread get data from EncodeQueue and do OpusEncode and put them into TcpQueue.
-    //TcpThread get data from TxQueue and send it out.
-    ZRingBuffer *m_rbClear;
-    ZRingBuffer *m_rbEncode;
+    ZRingBuffer *m_rbPlay;
     ZRingBuffer *m_rbTx;
 private:
     QTimer *m_timer;

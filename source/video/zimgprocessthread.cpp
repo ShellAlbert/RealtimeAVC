@@ -11,9 +11,11 @@ ZImgProcessThread::ZImgProcessThread()
     this->m_uart=NULL;
     this->m_timerProcess=NULL;
     this->m_bExitFlag=false;
+    this->m_bCleanup=true;
 
     this->m_rbMain=NULL;
     this->m_rbAux=NULL;
+
 }
 ZImgProcessThread::~ZImgProcessThread()
 {
@@ -42,9 +44,9 @@ qint32 ZImgProcessThread::ZStopThread()
     this->m_bExitFlag=true;
     return 0;
 }
-bool ZImgProcessThread::ZIsRunning()
+bool ZImgProcessThread::ZIsExitCleanup()
 {
-    return this->m_bRunning;
+    return this->m_bCleanup;
 }
 void ZImgProcessThread::ZDumpDiffXY2UART(qint32 nDiffX,qint32 nDiffY)
 {
@@ -94,6 +96,7 @@ void ZImgProcessThread::run()
     char *pRGBBufMain=new char[nBufSize];
     char *pRGBBufAux=new char[nBufSize];
     qDebug()<<"<MainLoop>:ImgProcessThread starts.";
+    this->m_bCleanup=false;
     while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
     {
         //1.fetch QImage from main queue.
@@ -178,6 +181,7 @@ void ZImgProcessThread::run()
     gGblPara.m_bImgCmpThreadExitFlag=true;
     gGblPara.m_bGblRst2Exit=true;
     emit this->ZSigThreadFinished();
+    this->m_bCleanup=true;
     return;
 #if 0
     do{

@@ -6,11 +6,6 @@
 #include <QFile>
 ZAudioParam::ZAudioParam()
 {
-    this->m_bCapThreadExitFlag=false;//ALSA capture thread.
-    this->m_bCutThreadExitFlag=false;//Noise Suppression thread.
-    this->m_bPlayThreadExitFlag=false;//Local playback thread.
-    this->m_bPCMEncThreadExitFlag=false;//Opus encode thread.
-    this->m_bTcpTxThreadExitFlag=false;//Audio Tx Tcp thread.
 
     //run mode.
     //0:Only do capture and write pcm to wav file.
@@ -77,6 +72,9 @@ ZGblPara::ZGblPara()
     this->m_bJsonImgPro=false;
     this->m_bJsonFlushUIImg=true;
     this->m_bJsonFlushUIWav=true;
+
+    //accumulated run seconds.
+    this->m_nAccumulatedSec=0;
 }
 ZGblPara::~ZGblPara()
 {

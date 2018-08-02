@@ -20,15 +20,17 @@ ZVideoTask::ZVideoTask(QObject *parent) : QObject(parent)
         this->m_rbH264[i]=NULL;
 
         this->m_capThread[i]=NULL;
-        this->m_h264Thread[i]=NULL;
-        this->m_videoTxThread[i]=NULL;//图像的TCP传输线程.
+        this->m_videoTxThread[i]=NULL;
     }
-
     this->m_process=NULL;//图像处理线程.
     this->m_tcp2Uart=NULL;//串口透传线程Android(tcp) <--> STM32(uart).
+    this->m_timerExit=new QTimer;
+    QObject::connect(this->m_timerExit,SIGNAL(timeout()),this,SLOT(ZSlotChkAllExitFlags()));
 }
 ZVideoTask::~ZVideoTask()
 {
+    delete this->m_timerExit;
+
     if(this->m_process)
     {
         this->m_process->ZStopThread();
@@ -42,14 +44,13 @@ ZVideoTask::~ZVideoTask()
         this->m_capThread[i]->wait(1000*10);
         delete this->m_capThread[i];
 
-        this->m_h264Thread[i]->ZStopThread();
-        this->m_h264Thread[i]->wait(1000*10);
-        delete this->m_h264Thread[i];
-
         this->m_videoTxThread[i]->ZStopThread();
         this->m_videoTxThread[i]->wait(1000*10);
         delete this->m_videoTxThread[i];
+    }
 
+    for(qint32 i=0;i<2;i++)
+    {
         delete [] this->m_rbProcess[i];
         delete [] this->m_rbYUV[i];
         delete [] this->m_rbH264[i];
@@ -60,7 +61,7 @@ qint32 ZVideoTask::ZDoInit()
 
     //需要排除的设备节点列表.
     QStringList extractNode;
-    //    extractNode.append("video0");
+    extractNode.append("video0");
     //    extractNode.append("video1");
     //    extractNode.append("video16");
     //    extractNode.append("video17");
@@ -126,11 +127,9 @@ qint32 ZVideoTask::ZDoInit()
     for(qint32 i=0;i<2;i++)
     {
         //main/aux capture thread to img process thread queue.
-        this->m_rbProcess[i]=new ZRingBuffer(30,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3*2);
+        this->m_rbProcess[i]=new ZRingBuffer(MAX_VIDEO_RING_BUFFER,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3*2);
         //main/aux cap thread to h264 enc thread.
-        this->m_rbYUV[i]=new ZRingBuffer(30,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3*2);
-        //h264 enc thread to video tx thread.
-        this->m_rbH264[i]=new ZRingBuffer(30,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3*2);
+        this->m_rbYUV[i]=new ZRingBuffer(MAX_VIDEO_RING_BUFFER,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3*2);
 
         //create capture thread.
         if(i==0)
@@ -139,13 +138,9 @@ qint32 ZVideoTask::ZDoInit()
         }else{
             this->m_capThread[i]=new ZImgCapThread(auxCamera,gGblPara.m_widthCAM1,gGblPara.m_heightCAM1,gGblPara.m_fpsCAM1);//Aux Camera.
         }
+        QObject::connect(this->m_capThread[i],SIGNAL(ZSigThreadFinished()),this,SLOT(ZSlotSubThreadsExited()));
         this->m_capThread[i]->ZBindProcessQueue(this->m_rbProcess[i]);
         this->m_capThread[i]->ZBindYUVQueue(this->m_rbYUV[i]);
-
-        //create h264 encode thread.
-        this->m_h264Thread[i]=new ZH264EncThread;
-        this->m_h264Thread[i]->ZBindYUVQueue(this->m_rbYUV[i]);
-        this->m_h264Thread[i]->ZBindH264Queue(this->m_rbH264[i]);
 
         //create video tx thread.
         if(0==i)
@@ -154,10 +149,12 @@ qint32 ZVideoTask::ZDoInit()
         }else{
             this->m_videoTxThread[i]=new ZVideoTxThread(TCP_PORT_VIDEO2);
         }
-        this->m_videoTxThread[i]->ZBindQueue(this->m_rbH264[i]);
+        QObject::connect(this->m_videoTxThread[i],SIGNAL(ZSigThreadFinished()),this,SLOT(ZSlotSubThreadsExited()));
+        this->m_videoTxThread[i]->ZBindQueue(this->m_rbYUV[i]);
     }
     //create image process thread.
     this->m_process=new ZImgProcessThread;
+    QObject::connect(this->m_process,SIGNAL(ZSigThreadFinished()),this,SLOT(ZSlotSubThreadsExited()));
     this->m_process->ZBindMainAuxImgQueue(this->m_rbProcess[0],this->m_rbProcess[1]);
     return 0;
 }
@@ -187,7 +184,6 @@ qint32 ZVideoTask::ZStartTask()
     for(qint32 i=0;i<2;i++)
     {
         this->m_videoTxThread[i]->ZStartThread();
-        this->m_h264Thread[i]->ZStartThread();
         this->m_capThread[i]->ZStartThread();
     }
     this->m_process->ZStartThread();
@@ -305,4 +301,93 @@ qint32 ZVideoTask::ZStartTask()
     this->m_cap1->ZStartThread();
     this->m_cap2->ZStartThread();
 #endif
+}
+void ZVideoTask::ZSlotSubThreadsExited()
+{
+    if(!this->m_timerExit->isActive())
+    {
+        this->m_timerExit->start(1000);
+    }
+}
+void ZVideoTask::ZSlotChkAllExitFlags()
+{
+    if(gGblPara.m_bGblRst2Exit)
+    {
+        //采集任务针对队列的操作使用的try。
+
+        //如果图像处理线程没有退出，可能process queue队列空，则模拟ImgCapThread投入一个空的图像数据，解除阻塞。
+        if(!this->m_process->ZIsExitCleanup())
+        {
+            if(this->m_rbProcess[0]->ZGetValidNum()==0)
+            {
+                qint8 *pRGBEmpty=new qint8[gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3];
+                memset(pRGBEmpty,0,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3);
+                //因为图像是RGB888的，所以总字节数=width*height*3.
+                this->m_rbProcess[0]->m_semaFree->acquire();
+                this->m_rbProcess[0]->ZPutElement((qint8*)pRGBEmpty,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3);
+                this->m_rbProcess[0]->m_semaUsed->release();
+                delete [] pRGBEmpty;
+            }
+            if(this->m_rbProcess[1]->ZGetValidNum()==0)
+            {
+                qint8 *pRGBEmpty=new qint8[gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3];
+                memset(pRGBEmpty,0,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3);
+                //因为图像是RGB888的，所以总字节数=width*height*3.
+                this->m_rbProcess[1]->m_semaFree->acquire();
+                this->m_rbProcess[1]->ZPutElement(pRGBEmpty,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3);
+                this->m_rbProcess[1]->m_semaUsed->release();
+                delete [] pRGBEmpty;
+            }
+        }
+
+        //如果发送线程没有退出，可能yuv queue队列为空，模拟ImgCapThread投入一帧空数据，解除阻塞。
+        if(this->m_videoTxThread[0]->ZIsExitCleanup())
+        {
+            if(this->m_rbYUV[0]->ZGetValidNum()==0)
+            {
+                qint8 *pYUVEmpty=new qint8[gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3];
+                memset(pYUVEmpty,0,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3);
+                this->m_rbYUV[0]->m_semaFree->acquire();
+                this->m_rbYUV[0]->ZPutElement(pYUVEmpty,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3);
+                this->m_rbYUV[0]->m_semaUsed->release();
+                delete [] pYUVEmpty;
+            }
+        }
+        if(this->m_videoTxThread[1]->ZIsExitCleanup())
+        {
+            if(this->m_rbYUV[1]->ZGetValidNum()==0)
+            {
+                qint8 *pYUVEmpty=new qint8[gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3];
+                memset(pYUVEmpty,0,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3);
+                this->m_rbYUV[1]->m_semaFree->acquire();
+                this->m_rbYUV[1]->ZPutElement(pYUVEmpty,gGblPara.m_widthCAM1*gGblPara.m_heightCAM1*3);
+                this->m_rbYUV[1]->m_semaUsed->release();
+                delete [] pYUVEmpty;
+            }
+        }
+
+        //当所有的子线程都退出时，则视频任务退出。
+        if(this->ZIsExitCleanup())
+        {
+            this->m_timerExit->stop();
+            emit this->ZSigVideoTaskExited();
+        }
+    }
+}
+bool ZVideoTask::ZIsExitCleanup()
+{
+    bool bCleanup=true;
+    if(!this->m_capThread[0]->ZIsExitCleanup() || !this->m_capThread[1]->ZIsExitCleanup())
+    {
+        bCleanup=false;
+    }
+    if(!this->m_process->ZIsExitCleanup())
+    {
+        bCleanup=false;
+    }
+    if(!this->m_videoTxThread[0]->ZIsExitCleanup() || !this->m_videoTxThread[1]->ZIsExitCleanup())
+    {
+        bCleanup=false;
+    }
+    return bCleanup;
 }

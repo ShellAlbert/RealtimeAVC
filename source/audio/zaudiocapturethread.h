@@ -63,7 +63,7 @@ public:
 
     qint32 ZStartThread(ZRingBuffer *rbNoise);
     qint32 ZStopThread();
-    bool ZIsRunning();
+    bool ZIsExitCleanup();
 protected:
     void run();
 signals:
@@ -91,6 +91,7 @@ private:
     qint64 m_nEscapeSec;
 private:
     bool m_bExitFlag;
+    bool m_bCleanup;
 private:
     ZRingBuffer *m_rbNoise;
 };

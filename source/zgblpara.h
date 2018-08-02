@@ -4,6 +4,9 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <QtGui/QImage>
+//use hard h264 encoder
+//or use soft h264 encoder.
+//#define USE_HARD_H264_ENCODER   1
 
 #define APP_VERSION "0.1.0" //2018/07/10.
 
@@ -19,7 +22,7 @@
 
 //use usleep() to reduce cpu heavy load.
 #define AUDIO_THREAD_SCHEDULE_US    (1000*10) //10ms.
-#define VIDEO_THREAD_SCHEDULE_US    (1000*100) //10ms.
+#define VIDEO_THREAD_SCHEDULE_US    (1000*10) //10ms.
 /////////////////////////////////////////////////////////////////////////////
 #include <QString>
 #include <QQueue>
@@ -94,14 +97,6 @@ public:
     QString m_capCardName;
     //play card name.
     QString m_playCardName;
-
-public:
-    //thread exit flag.
-    bool m_bCapThreadExitFlag;//ALSA capture thread.
-    bool m_bCutThreadExitFlag;//Noise Suppression thread.
-    bool m_bPlayThreadExitFlag;//Local playback thread.
-    bool m_bPCMEncThreadExitFlag;//Opus encode thread.
-    bool m_bTcpTxThreadExitFlag;//Audio Tx Tcp thread.
 
 public:
     //run mode.
@@ -240,6 +235,10 @@ public:
     ZAudioParam m_audio;
     //video related parameters.
     ZVideoParam m_video;
+
+public:
+    //accumulated run seconds.
+    qint64 m_nAccumulatedSec;
 };
 extern ZGblPara gGblPara;
 extern cv::Mat QImage2cvMat(const QImage &img);
@@ -266,4 +265,8 @@ extern qint32 QByteArrayToqint32(QByteArray ba);
 
 
 #define _CURRENT_DATETIME_    QDateTime::currentDateTime().toString("[yyyy/MM/dd hh:mm:ss]")
+
+
+#define MAX_AUDIO_RING_BUFFER  (10)
+#define MAX_VIDEO_RING_BUFFER  (10)
 #endif // ZGBLPARA_H

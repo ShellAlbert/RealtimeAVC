@@ -25,7 +25,7 @@ ZRingBuffer::~ZRingBuffer()
         delete [] element->m_pData;
         delete element;
     }
-    this->m_vec.clear();
+    //this->m_vec.clear();
 
     delete this->m_semaUsed;
     delete this->m_semaFree;

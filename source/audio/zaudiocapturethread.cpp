@@ -11,6 +11,8 @@ ZAudioCaptureThread::ZAudioCaptureThread(QString capDevName,bool bDump2WavFile)
     this->m_bDump2WavFile=bDump2WavFile;
 
     this->m_nTotalBytes=0;
+
+    this->m_bCleanup=true;
 }
 ZAudioCaptureThread::~ZAudioCaptureThread()
 {
@@ -66,6 +68,7 @@ qint32 ZAudioCaptureThread::ZStartThread(ZRingBuffer *rbNoise)
     this->m_rbNoise=rbNoise;
 
     this->m_bExitFlag=false;
+
     this->m_nTotalBytes=0;
     this->m_nEscapeMsec=0;
     this->m_nEscapeSec=0;
@@ -78,9 +81,9 @@ qint32 ZAudioCaptureThread::ZStopThread()
     this->m_bExitFlag=true;
     return 0;
 }
-bool ZAudioCaptureThread::ZIsRunning()
+bool ZAudioCaptureThread::ZIsExitCleanup()
 {
-    return this->m_bExitFlag;
+    return this->m_bCleanup;
 }
 void ZAudioCaptureThread::run()
 {
@@ -268,32 +271,21 @@ void ZAudioCaptureThread::run()
         inputBuffer=new char[pcmBlkSize];
         //the main-loop.
         qDebug()<<"<MainLoop>:CaptureThread starts.";
+        this->m_bCleanup=false;
         while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
         {
             // Read capture buffer from ALSA input device.
-            while(snd_pcm_readi(pcmHandle,inputBuffer,pcmFrames)<0)
+            if(snd_pcm_readi(pcmHandle,inputBuffer,pcmFrames)<0)
             {
                 snd_pcm_prepare(pcmHandle);
                 //qDebug( "<cap>:Buffer Overrun");
                 gGblPara.m_audio.m_nCapOverrun++;
+                continue;
             }
             //try to put original pcm data into noise queue.
-            qint32 nTryTimes=0;
-            do{
-                if(this->m_rbNoise->m_semaFree->tryAcquire())//空闲信号量减1.
-                {
-                    this->m_rbNoise->ZPutElement((qint8*)inputBuffer,pcmBlkSize);
-                    this->m_rbNoise->m_semaUsed->release();//已用信号量加1.
-                    break;
-                }
-                if(nTryTimes++>10)
-                {
-                    qDebug()<<"<Error>:audio noise queue is full,trash this frame.";
-                    break;
-                }
-                qDebug()<<"<Warning>:audio noise queue is full,try times "<<nTryTimes<<".";
-                this->usleep(AUDIO_THREAD_SCHEDULE_US);
-            }while(1);
+            this->m_rbNoise->m_semaFree->acquire();
+            this->m_rbNoise->ZPutElement((qint8*)inputBuffer,pcmBlkSize);
+            this->m_rbNoise->m_semaUsed->release();
         }
     }while(0);
 
@@ -318,6 +310,7 @@ void ZAudioCaptureThread::run()
     //set global request to exit flag to help other thread to exit.
     gGblPara.m_bGblRst2Exit=true;
     emit this->ZSigThreadFinished();
+    this->m_bCleanup=true;
     return;
 }
 quint64 ZAudioCaptureThread::ZGetTimestamp()

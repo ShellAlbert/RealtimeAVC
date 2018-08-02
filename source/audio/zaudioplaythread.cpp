@@ -5,15 +5,16 @@
 ZAudioPlayThread::ZAudioPlayThread(QString playCardName)
 {
     this->m_playCardName=playCardName;
+    this->m_bCleanup=true;
 }
 ZAudioPlayThread::~ZAudioPlayThread()
 {
 
 }
 
-qint32 ZAudioPlayThread::ZStartThread(ZRingBuffer *rbClear)
+qint32 ZAudioPlayThread::ZStartThread(ZRingBuffer *rbPlay)
 {
-    this->m_rbClear=rbClear;
+    this->m_rbPlay=rbPlay;
     this->m_bExitFlag=false;
     this->start();
     return 0;
@@ -23,9 +24,9 @@ qint32 ZAudioPlayThread::ZStopThread()
     this->m_bExitFlag=true;
     return 0;
 }
-bool ZAudioPlayThread::ZIsRunning()
+bool ZAudioPlayThread::ZIsExitCleanup()
 {
-    return this->m_bExitFlag;
+    return this->m_bCleanup;
 }
 
 void ZAudioPlayThread::run()
@@ -202,23 +203,13 @@ void ZAudioPlayThread::run()
     qint32 nRemaingBytes=0;
     //the main loop.
     qDebug()<<"<MainLoop>:PlaybackThread starts.";
+    this->m_bCleanup=false;
     while(!gGblPara.m_bGblRst2Exit && !this->m_bExitFlag)
     {
         qint32 nPCMLen;
-        //wait until the queue has 5 frames.
-        //        if(this->m_semaUsed->available()<10)
-        //        {
-        //            continue;
-        //        }
-
-        //尝试从播放队列中取出一帧音频数据.
-        if(!this->m_rbClear->m_semaUsed->tryAcquire())
-        {
-            this->usleep(AUDIO_THREAD_SCHEDULE_US);
-            continue;
-        }
-        nPCMLen=this->m_rbClear->ZGetElement((qint8*)pcmBuffer,BLOCK_SIZE);
-        this->m_rbClear->m_semaFree->release();
+        this->m_rbPlay->m_semaUsed->acquire();
+        nPCMLen=this->m_rbPlay->ZGetElement((qint8*)pcmBuffer,BLOCK_SIZE);
+        this->m_rbPlay->m_semaFree->release();
         if(nPCMLen<=0)
         {
             qDebug()<<"<Error>:Audio PlayThread get 0 length of pcm data from clear queue.";
@@ -306,6 +297,7 @@ void ZAudioPlayThread::run()
     //set global request to exit flag to help other thread to exit.
     gGblPara.m_bGblRst2Exit=true;
     emit this->ZSigThreadFinished();
+    this->m_bCleanup=true;
     return;
 }
 quint64 ZAudioPlayThread::ZGetTimestamp()
